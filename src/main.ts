@@ -12,7 +12,9 @@ type Kind = 'sun' | 'moon';
 type Mode = 'bottom-touch' | 'center';
 
 interface AppState {
-  structure: (LatLon & { height: number }) | null;
+  structure: LatLon | null;
+  /** target height in meters — pinned in the bottom bar, survives pin moves */
+  height: number;
   kind: Kind;
   date: string; // YYYY-MM-DD local
   mode: Mode;
@@ -25,6 +27,7 @@ const today = new Date();
 function loadState(): AppState {
   const def: AppState = {
     structure: null,
+    height: 100,
     kind: 'sun',
     date: isoDate(today),
     mode: 'bottom-touch',
@@ -38,15 +41,14 @@ function loadState(): AppState {
     // stale/foreign localStorage must not leak invalid values into the solver
     const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
     const structure =
-      p.structure &&
-      Number.isFinite(p.structure.lat) &&
-      Number.isFinite(p.structure.lon) &&
-      Number.isFinite(p.structure.height) &&
-      p.structure.height > 0
-        ? { lat: p.structure.lat, lon: p.structure.lon, height: p.structure.height }
+      p.structure && Number.isFinite(p.structure.lat) && Number.isFinite(p.structure.lon)
+        ? { lat: p.structure.lat, lon: p.structure.lon }
         : null;
+    // height moved to its own field; old states carried it inside structure
+    const height = Math.max(1, num(p.height, num(p.structure?.height, def.height)));
     return {
       structure,
+      height,
       kind: p.kind === 'moon' ? 'moon' : 'sun',
       date: isoDate(today),
       mode: p.mode === 'center' ? 'center' : 'bottom-touch',
@@ -89,7 +91,7 @@ function requestSolve(): void {
   const { startMs, endMs } = zonedDayWindow(state.date, structureTz());
   const req: SolveRequest = {
     id: ++reqId,
-    structure: state.structure,
+    structure: { ...state.structure, height: state.height },
     kind: state.kind,
     dayStartMs: startMs,
     dayEndMs: endMs,
@@ -105,11 +107,9 @@ function requestSolve(): void {
 // --- map --------------------------------------------------------------------
 
 const mapH = createMap($('map'), (p) => {
-  state.structure = { ...p, height: state.structure?.height ?? 100 };
+  state.structure = p; // pinned height in the bar carries over
   saveState();
   mapH.setStructure(p);
-  $('height-sheet').classList.remove('hidden');
-  ($('height-input') as unknown as HTMLInputElement).value = String(state.structure.height);
   $('hint').textContent = t('movePin');
   requestSolve();
 });
@@ -172,8 +172,8 @@ function renderInstant(): void {
 
 function applyStaticText(): void {
   $('hint').textContent = state.structure ? t('movePin') : t('tapToPlace');
-  $('height-label').textContent = t('structureHeight');
-  $('height-ok').textContent = t('ok');
+  $('height-wrap').title = t('structureHeight');
+  ($('height-input') as unknown as HTMLInputElement).placeholder = 'm';
   $('sun-btn').textContent = `☀️ ${t('sun')}`;
   $('moon-btn').textContent = `🌙 ${t('moon')}`;
   $('nav-link').textContent = t('navigate');
@@ -232,15 +232,17 @@ function wire(): void {
   });
   syncKind();
 
+  // pinned height field: re-solve as the user types, lightly debounced
   const heightInput = $('height-input') as unknown as HTMLInputElement;
-  $('height-ok').addEventListener('click', () => {
+  heightInput.value = String(state.height);
+  let heightTimer: ReturnType<typeof setTimeout> | null = null;
+  heightInput.addEventListener('input', () => {
     const h = Number(heightInput.value);
-    if (state.structure && h > 0) {
-      state.structure.height = h;
-      saveState();
-      $('height-sheet').classList.add('hidden');
-      requestSolve();
-    }
+    if (!Number.isFinite(h) || h <= 0) return;
+    state.height = h;
+    saveState();
+    if (heightTimer) clearTimeout(heightTimer);
+    heightTimer = setTimeout(requestSolve, 400);
   });
 
   // settings

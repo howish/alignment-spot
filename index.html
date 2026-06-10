@@ -17,12 +17,6 @@
       <button id="settings-btn" aria-label="settings">⚙️</button>
     </div>
 
-    <div id="height-sheet" class="sheet hidden">
-      <label id="height-label" for="height-input"></label>
-      <input id="height-input" type="number" min="1" step="1" inputmode="decimal" />
-      <button id="height-ok" class="primary"></button>
-    </div>
-
     <div id="bottombar">
       <div id="detail" class="hidden">
         <span id="detail-text"></span>
@@ -31,6 +25,11 @@
       <div class="row">
         <button id="sun-btn" class="pill"></button>
         <button id="moon-btn" class="pill"></button>
+        <label class="height-wrap" id="height-wrap">
+          <span id="height-label">⛰</span>
+          <input id="height-input" type="number" min="1" step="1" inputmode="decimal" />
+          <span class="unit">m</span>
+        </label>
         <button id="date-prev" class="pill small">‹</button>
         <input id="date-input" type="date" />
         <button id="date-next" class="pill small">›</button>
