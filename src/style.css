@@ -37,18 +37,7 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
   border-radius: 999px;
   font-size: 12px;
 }
-#settings-btn {
-  margin-left: auto;
-  pointer-events: auto;
-  border: none;
-  background: #fff;
-  border-radius: 50%;
-  width: 38px;
-  height: 38px;
-  font-size: 18px;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-  cursor: pointer;
-}
+#settings-btn { margin-left: auto; }
 
 .height-wrap {
   display: flex;
