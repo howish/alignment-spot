@@ -8,6 +8,8 @@ import { DEFAULT_CONFIG, solveDay, type AlignMode, type InstantSolution } from '
 export interface SolveRequest {
   id: number;
   structure: { lat: number; lon: number; height: number };
+  /** optional second solve at a lower alignment height (side-bar dashed line) */
+  adjustedHeight?: number;
   kind: BodyKind;
   dayStartMs: number;
   dayEndMs: number;
@@ -20,6 +22,7 @@ export interface SolveRequest {
 export interface SolveResult {
   id: number;
   solutions: InstantSolution[];
+  adjusted: InstantSolution[] | null;
 }
 
 const dem = createTileSampler();
@@ -49,18 +52,21 @@ self.onmessage = async (ev: MessageEvent<{ type: 'solve'; req: SolveRequest }>) 
     mode: req.mode,
     refraction: req.refraction,
   };
-  const solutions = await solveDay(
-    cfg,
-    samples,
-    dem,
-    (frac) => {
-      if (currentId === req.id) self.postMessage({ type: 'progress', id: req.id, frac });
-    },
-    () => currentId !== req.id, // bail out as soon as a newer request lands
-  );
+  const aborted = () => currentId !== req.id; // bail as soon as a newer request lands
+  // the ephemeris samples are height-independent, so both passes share them
+  const passes = 1 + (req.adjustedHeight !== undefined ? 1 : 0);
+  const progress = (pass: number) => (frac: number) => {
+    if (!aborted()) self.postMessage({ type: 'progress', id: req.id, frac: (pass + frac) / passes });
+  };
+  const solutions = await solveDay(cfg, samples, dem, progress(0), aborted);
+  let adjusted: InstantSolution[] | null = null;
+  if (req.adjustedHeight !== undefined) {
+    const adjCfg = { ...cfg, structure: { ...req.structure, height: req.adjustedHeight } };
+    adjusted = await solveDay(adjCfg, samples, dem, progress(1), aborted);
+  }
   // A newer request may have started while this one was solving; stale
   // results are dropped here rather than flickering the UI.
-  if (currentId === req.id) {
-    self.postMessage({ type: 'result', id: req.id, solutions } satisfies SolveResult & { type: string });
+  if (!aborted()) {
+    self.postMessage({ type: 'result', id: req.id, solutions, adjusted } satisfies SolveResult & { type: string });
   }
 };

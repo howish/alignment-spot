@@ -15,6 +15,8 @@ interface AppState {
   structure: LatLon | null;
   /** target height in meters — pinned in the bottom bar, survives pin moves */
   height: number;
+  /** side-bar alignment height (0..height); null = follow the typed height */
+  adjHeight: number | null;
   kind: Kind;
   date: string; // YYYY-MM-DD local
   mode: Mode;
@@ -28,6 +30,7 @@ function loadState(): AppState {
   const def: AppState = {
     structure: null,
     height: 100,
+    adjHeight: null,
     kind: 'sun',
     date: isoDate(today),
     mode: 'bottom-touch',
@@ -46,9 +49,14 @@ function loadState(): AppState {
         : null;
     // height moved to its own field; old states carried it inside structure
     const height = Math.max(1, num(p.height, num(p.structure?.height, def.height)));
+    const adjHeight =
+      typeof p.adjHeight === 'number' && Number.isFinite(p.adjHeight) && p.adjHeight >= 0 && p.adjHeight < height
+        ? p.adjHeight
+        : null;
     return {
       structure,
       height,
+      adjHeight,
       kind: p.kind === 'moon' ? 'moon' : 'sun',
       date: isoDate(today),
       mode: p.mode === 'center' ? 'center' : 'bottom-touch',
@@ -70,6 +78,7 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const worker = new SolverWorker();
 let reqId = 0;
 let solutions: InstantSolution[] = [];
+let adjustedSolutions: InstantSolution[] | null = null;
 let sliderIdx = 0;
 
 worker.onmessage = (ev: MessageEvent) => {
@@ -78,9 +87,17 @@ worker.onmessage = (ev: MessageEvent) => {
     $('status').textContent = `${t('solving')} ${Math.round(msg.frac * 100)}%`;
   } else if (msg.type === 'result' && msg.id === reqId) {
     solutions = msg.solutions;
+    adjustedSolutions = msg.adjusted;
     onSolutions();
   }
 };
+
+/** effective side-bar height, or null when it just follows the typed value */
+function effectiveAdjHeight(): number | null {
+  if (state.adjHeight === null) return null;
+  const clamped = Math.min(Math.max(state.adjHeight, 0), state.height);
+  return Math.abs(clamped - state.height) < 0.5 ? null : clamped;
+}
 
 /** The structure's timezone — the day window and all displayed times use it. */
 const structureTz = () =>
@@ -89,9 +106,11 @@ const structureTz = () =>
 function requestSolve(): void {
   if (!state.structure) return;
   const { startMs, endMs } = zonedDayWindow(state.date, structureTz());
+  const adj = effectiveAdjHeight();
   const req: SolveRequest = {
     id: ++reqId,
     structure: { ...state.structure, height: state.height },
+    ...(adj !== null ? { adjustedHeight: adj } : {}),
     kind: state.kind,
     dayStartMs: startMs,
     dayEndMs: endMs,
@@ -111,6 +130,7 @@ const mapH = createMap($('map'), (p) => {
   saveState();
   mapH.setStructure(p);
   $('hint').textContent = t('movePin');
+  syncAdjUI();
   requestSolve();
 });
 
@@ -124,7 +144,9 @@ function onSolutions(): void {
   const slider = $('time-slider') as unknown as HTMLInputElement;
   if (ok.length === 0 || !state.structure) {
     mapH.setOverlays(null);
+    mapH.setAdjusted(null);
     mapH.setSpot(null, false);
+    mapH.setAdjustedSpot(null);
     mapH.setSightline(null, null);
     slider.disabled = true;
     $('status').textContent = solutions.length ? t('noAlignment') : '';
@@ -138,6 +160,7 @@ function onSolutions(): void {
   if (sliderIdx > ok.length - 1) sliderIdx = Math.floor(ok.length / 2);
   slider.value = String(sliderIdx);
   mapH.setOverlays(buildBandGeometry(state.structure, solutions));
+  mapH.setAdjusted(adjustedSolutions ? buildBandGeometry(state.structure, adjustedSolutions) : null);
   $('approx-badge').classList.toggle('hidden', !solutions.some((s) => s.approximate));
   renderInstant();
 }
@@ -145,7 +168,11 @@ function onSolutions(): void {
 function renderInstant(): void {
   const ok = okIdx;
   if (ok.length === 0 || !state.structure) return;
-  const s = solutions[ok[Math.min(sliderIdx, ok.length - 1)]];
+  const absIdx = ok[Math.min(sliderIdx, ok.length - 1)];
+  const s = solutions[absIdx];
+  // adjusted pass shares the sample grid, so the same index is the same instant
+  const adj = adjustedSolutions?.[absIdx];
+  mapH.setAdjustedSpot(adj?.status === 'ok' && adj.spot ? adj.spot : null);
   const time = new Date(s.t).toLocaleTimeString(getLang(), {
     hour: '2-digit',
     minute: '2-digit',
@@ -169,6 +196,17 @@ function renderInstant(): void {
 }
 
 // --- UI wiring ----------------------------------------------------------------
+
+/** keep the vertical side slider in sync with the typed height */
+function syncAdjUI(): void {
+  const adjSlider = $('adj-slider') as unknown as HTMLInputElement;
+  adjSlider.max = String(state.height);
+  if (state.adjHeight !== null && state.adjHeight >= state.height) state.adjHeight = null;
+  const v = state.adjHeight ?? state.height;
+  adjSlider.value = String(v);
+  $('adj-value').textContent = `${Math.round(v)}m`;
+  $('side-slider').classList.toggle('hidden', !state.structure);
+}
 
 function applyStaticText(): void {
   $('hint').textContent = state.structure ? t('movePin') : t('tapToPlace');
@@ -241,9 +279,23 @@ function wire(): void {
     if (!Number.isFinite(h) || h <= 0) return;
     state.height = h;
     saveState();
+    syncAdjUI(); // side-bar range follows the typed height
     if (heightTimer) clearTimeout(heightTimer);
     heightTimer = setTimeout(requestSolve, 400);
   });
+
+  // vertical side bar: align with a lower point on the structure (dashed line)
+  const adjSlider = $('adj-slider') as unknown as HTMLInputElement;
+  let adjTimer: ReturnType<typeof setTimeout> | null = null;
+  adjSlider.addEventListener('input', () => {
+    const v = Number(adjSlider.value);
+    state.adjHeight = v >= state.height ? null : Math.max(0, v);
+    $('adj-value').textContent = `${Math.round(Math.min(v, state.height))}m`;
+    saveState();
+    if (adjTimer) clearTimeout(adjTimer);
+    adjTimer = setTimeout(requestSolve, 250);
+  });
+  syncAdjUI();
 
   // settings
   $('settings-btn').addEventListener('click', () => $('settings-modal').classList.remove('hidden'));

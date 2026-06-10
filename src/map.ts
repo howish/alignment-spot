@@ -12,8 +12,10 @@ export interface MapHandles {
   map: maplibregl.Map;
   setStructure(p: LatLon | null): void;
   setOverlays(geom: BandGeometry | null): void;
+  setAdjusted(geom: BandGeometry | null): void;
   setSightline(structure: LatLon | null, spot: LatLon | null): void;
   setSpot(p: LatLon | null, occluded: boolean): void;
+  setAdjustedSpot(p: LatLon | null): void;
   setBodyKind(kind: 'sun' | 'moon'): void;
 }
 
@@ -41,6 +43,7 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
   let marker: maplibregl.Marker | null = null;
   let kind: 'sun' | 'moon' = 'sun';
   let pendingGeom: BandGeometry | null = null;
+  let pendingAdjusted: BandGeometry | null = null;
 
   // Defer single taps so a double-click zoom doesn't also re-place the pin.
   let tapTimer: ReturnType<typeof setTimeout> | null = null;
@@ -62,8 +65,11 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
     map.addSource('band', { type: 'geojson', data: EMPTY });
     map.addSource('clear-line', { type: 'geojson', data: EMPTY });
     map.addSource('occluded-line', { type: 'geojson', data: EMPTY });
+    map.addSource('adjusted-line', { type: 'geojson', data: EMPTY });
+    map.addSource('adjusted-occluded-line', { type: 'geojson', data: EMPTY });
     map.addSource('sightline', { type: 'geojson', data: EMPTY });
     map.addSource('spot', { type: 'geojson', data: EMPTY });
+    map.addSource('adjusted-spot', { type: 'geojson', data: EMPTY });
 
     map.addLayer({
       id: 'band-fill',
@@ -82,6 +88,19 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
       type: 'line',
       source: 'occluded-line',
       paint: { 'line-color': '#9ca3af', 'line-width': 2, 'line-dasharray': [2, 2] },
+    });
+    // side-bar adjusted height: same hue, dashed, thinner
+    map.addLayer({
+      id: 'adjusted-line',
+      type: 'line',
+      source: 'adjusted-line',
+      paint: { 'line-color': COLORS.sun.line, 'line-width': 2, 'line-dasharray': [4, 3] },
+    });
+    map.addLayer({
+      id: 'adjusted-occluded-line',
+      type: 'line',
+      source: 'adjusted-occluded-line',
+      paint: { 'line-color': '#9ca3af', 'line-width': 1.5, 'line-dasharray': [1, 2] },
     });
     map.addLayer({
       id: 'sightline',
@@ -110,7 +129,20 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
         'circle-stroke-width': 2,
       },
     });
+    // hollow marker for the adjusted-height spot
+    map.addLayer({
+      id: 'adjusted-spot-dot',
+      type: 'circle',
+      source: 'adjusted-spot',
+      paint: {
+        'circle-radius': 4,
+        'circle-color': '#ffffff',
+        'circle-stroke-color': COLORS.sun.line,
+        'circle-stroke-width': 2,
+      },
+    });
     if (pendingGeom) setOverlays(pendingGeom);
+    if (pendingAdjusted) setAdjusted(pendingAdjusted);
   });
 
   const src = (id: string) => map.getSource(id) as maplibregl.GeoJSONSource | undefined;
@@ -123,6 +155,27 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
     src('band')?.setData(geom ? { type: 'FeatureCollection', features: geom.band } : EMPTY);
     src('clear-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.clearLines } : EMPTY);
     src('occluded-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.occludedLines } : EMPTY);
+  }
+
+  function setAdjusted(geom: BandGeometry | null): void {
+    if (!map.isStyleLoaded() && geom) {
+      pendingAdjusted = geom;
+      return;
+    }
+    src('adjusted-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.clearLines } : EMPTY);
+    src('adjusted-occluded-line')?.setData(
+      geom ? { type: 'FeatureCollection', features: geom.occludedLines } : EMPTY,
+    );
+  }
+
+  function setAdjustedSpot(p: LatLon | null): void {
+    const data: GeoJSON.FeatureCollection = p
+      ? {
+          type: 'FeatureCollection',
+          features: [{ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [p.lon, p.lat] } }],
+        }
+      : EMPTY;
+    src('adjusted-spot')?.setData(data);
   }
 
   function setSightline(structure: LatLon | null, spot: LatLon | null): void {
@@ -176,9 +229,11 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
     if (!map.isStyleLoaded()) return;
     map.setPaintProperty('band-fill', 'fill-color', COLORS[kind].band);
     map.setPaintProperty('clear-line', 'line-color', COLORS[kind].line);
+    map.setPaintProperty('adjusted-line', 'line-color', COLORS[kind].line);
     map.setPaintProperty('spot-halo', 'circle-color', ['case', ['get', 'occluded'], '#9ca3af', COLORS[kind].line]);
     map.setPaintProperty('spot-dot', 'circle-color', ['case', ['get', 'occluded'], '#6b7280', COLORS[kind].line]);
+    map.setPaintProperty('adjusted-spot-dot', 'circle-stroke-color', COLORS[kind].line);
   }
 
-  return { map, setStructure, setOverlays, setSightline, setSpot, setBodyKind };
+  return { map, setStructure, setOverlays, setAdjusted, setSightline, setSpot, setAdjustedSpot, setBodyKind };
 }
