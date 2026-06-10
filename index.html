@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-TW">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#111827" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <title>Alignment Spot</title>
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <div id="topbar">
+      <span id="hint"></span>
+      <span id="approx-badge" class="badge hidden"></span>
+      <button id="settings-btn" aria-label="settings">⚙️</button>
+    </div>
+
+    <div id="height-sheet" class="sheet hidden">
+      <label id="height-label" for="height-input"></label>
+      <input id="height-input" type="number" min="1" step="1" inputmode="decimal" />
+      <button id="height-ok" class="primary"></button>
+    </div>
+
+    <div id="bottombar">
+      <div id="detail" class="hidden">
+        <span id="detail-text"></span>
+        <a id="nav-link" target="_blank" rel="noopener"></a>
+      </div>
+      <div class="row">
+        <button id="sun-btn" class="pill"></button>
+        <button id="moon-btn" class="pill"></button>
+        <button id="date-prev" class="pill small">‹</button>
+        <input id="date-input" type="date" />
+        <button id="date-next" class="pill small">›</button>
+      </div>
+      <div class="row">
+        <input id="time-slider" type="range" min="0" max="0" value="0" disabled />
+        <span id="time-label">--:--</span>
+      </div>
+      <div id="status"></div>
+    </div>
+
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <b id="settings-title"></b>
+          <button id="settings-close">✕</button>
+        </div>
+        <fieldset>
+          <legend id="mode-label"></legend>
+          <label><input type="radio" name="mode" id="mode-bottom" /> <span id="mode-bottom-label"></span></label>
+          <label><input type="radio" name="mode" id="mode-center" /> <span id="mode-center-label"></span></label>
+        </fieldset>
+        <label class="field"><span id="eye-label"></span><input id="eye-input" type="number" min="0" step="0.1" /></label>
+        <label class="field"><span id="refraction-label"></span><input id="refraction-input" type="checkbox" /></label>
+        <label class="field"><span id="lang-label"></span><select id="lang-select"></select></label>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
