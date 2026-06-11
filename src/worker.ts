@@ -7,6 +7,8 @@ import { DEFAULT_CONFIG, solveDayHeights, type AlignMode, type InstantSolution }
 
 export interface SolveRequest {
   id: number;
+  /** 'base' (default) or 'refine' — echoed back so the UI can route results */
+  tag?: 'base' | 'refine';
   structure: { lat: number; lon: number; height: number };
   /** search range in meters (solver maxDistance); default 30 km */
   maxDistance?: number;
@@ -59,7 +61,7 @@ self.onmessage = async (ev: MessageEvent<{ type: 'solve'; req: SolveRequest }>) 
     samples,
     dem,
     (frac) => {
-      if (!aborted()) self.postMessage({ type: 'progress', id: req.id, frac });
+      if (!aborted()) self.postMessage({ type: 'progress', id: req.id, tag: req.tag ?? 'base', frac });
     },
     aborted,
   );
@@ -67,6 +69,11 @@ self.onmessage = async (ev: MessageEvent<{ type: 'solve'; req: SolveRequest }>) 
   // A newer request may have started while this one was solving; stale
   // results are dropped here rather than flickering the UI.
   if (!aborted()) {
-    self.postMessage({ type: 'result', id: req.id, solutions } satisfies SolveResult & { type: string });
+    self.postMessage({
+      type: 'result',
+      id: req.id,
+      tag: req.tag ?? 'base',
+      solutions,
+    } satisfies SolveResult & { type: string; tag: string });
   }
 };

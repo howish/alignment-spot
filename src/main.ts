@@ -1,4 +1,4 @@
-import { buildBandGeometry, buildBranchGeometry } from './band';
+import { buildBandGeometry, buildBranchGeometry, mergeSolutions } from './band';
 import { compass, type LatLon } from './geo';
 import { getLang, LANGS, setLang, t } from './i18n';
 import { createMap } from './map';
@@ -82,14 +82,22 @@ const worker = new SolverWorker();
 let reqId = 0;
 let solutions: InstantSolution[] = [];
 let sliderIdx = 0;
+/** finer-sampled splice for the zoomed viewport, and its time window */
+let refined: { sols: InstantSolution[]; t0: number; t1: number } | null = null;
+let refineReqId = -1;
 
 worker.onmessage = (ev: MessageEvent) => {
   const msg = ev.data;
-  if (msg.type === 'progress' && msg.id === reqId) {
+  if (msg.type === 'progress' && msg.id === reqId && msg.tag === 'base') {
     $('status').textContent = `${t('solving')} ${Math.round(msg.frac * 100)}%`;
-  } else if (msg.type === 'result' && msg.id === reqId) {
+  } else if (msg.type === 'result' && msg.tag === 'base' && msg.id === reqId) {
     solutions = msg.solutions;
+    refined = null; // a new base invalidates any old splice
     onSolutions();
+    scheduleRefine();
+  } else if (msg.type === 'result' && msg.tag === 'refine' && msg.id === refineReqId) {
+    refined = { sols: msg.solutions, t0: refinePendingT0, t1: refinePendingT1 };
+    renderGeometry();
   }
 };
 
@@ -116,6 +124,82 @@ function requestSolve(): void {
   worker.postMessage({ type: 'solve', req });
 }
 
+// --- viewport refinement ------------------------------------------------------
+// Zoomed in, the 1-min vertices show as kinks; re-solve just the on-screen
+// time window at a finer step and splice it into the rendered geometry.
+
+const REFINE_MIN_ZOOM = 12;
+let refinePendingT0 = 0;
+let refinePendingT1 = 0;
+let refineTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleRefine(): void {
+  if (refineTimer) clearTimeout(refineTimer);
+  refineTimer = setTimeout(requestRefine, 350);
+}
+
+function requestRefine(): void {
+  if (!state.structure || !okIdx.length) return;
+  if (mapH.map.getZoom() < REFINE_MIN_ZOOM) {
+    if (refined) {
+      refined = null;
+      renderGeometry();
+    }
+    return;
+  }
+  const b = mapH.map.getBounds();
+  const latPad = (b.getNorth() - b.getSouth()) * 0.2;
+  const lonPad = (b.getEast() - b.getWest()) * 0.2;
+  const inView = (lat: number, lon: number) =>
+    lat > b.getSouth() - latPad && lat < b.getNorth() + latPad && lon > b.getWest() - lonPad && lon < b.getEast() + lonPad;
+  let t0 = Infinity;
+  let t1 = -Infinity;
+  for (const i of okIdx) {
+    const s = solutions[i];
+    if (s.all.some((sp) => inView(sp.lat, sp.lon))) {
+      t0 = Math.min(t0, s.t);
+      t1 = Math.max(t1, s.t);
+    }
+  }
+  if (!Number.isFinite(t0)) {
+    if (refined) {
+      refined = null;
+      renderGeometry();
+    }
+    return;
+  }
+  t0 -= 60000;
+  t1 += 60000;
+  const spanMin = (t1 - t0) / 60000;
+  // 10 s floor, scaled so a refine stays around a thousand samples
+  const stepMin = Math.max(1 / 6, spanMin / 1200);
+  refinePendingT0 = t0;
+  refinePendingT1 = t1;
+  refineReqId = ++reqId;
+  const req: SolveRequest = {
+    id: refineReqId,
+    tag: 'refine',
+    structure: { ...state.structure, height: state.height },
+    maxDistance: state.maxDistance,
+    kind: state.kind,
+    dayStartMs: t0,
+    dayEndMs: t1,
+    stepMin,
+    eyeHeight: state.eyeHeight,
+    mode: state.mode,
+    refraction: state.refraction,
+  };
+  worker.postMessage({ type: 'solve', req });
+}
+
+/** geometry from base solutions plus the refined splice, if any */
+function renderGeometry(): void {
+  if (!state.structure) return;
+  const merged = refined ? mergeSolutions(solutions, refined.sols, refined.t0, refined.t1) : solutions;
+  mapH.setOverlays(buildBandGeometry(state.structure, merged));
+  mapH.setBranches(buildBranchGeometry(merged));
+}
+
 // --- map --------------------------------------------------------------------
 
 const mapH = createMap($('map'), (p) => {
@@ -127,6 +211,16 @@ const mapH = createMap($('map'), (p) => {
   recomputeAnchorFromDate(); // structure may sit in a different timezone
   requestSolve();
 });
+
+// re-target the high-resolution splice as the user pans/zooms
+mapH.map.on('moveend', () => scheduleRefine());
+
+// test/debug handle (read-only usage; not part of the public surface)
+(window as unknown as Record<string, unknown>).__alignspot = {
+  map: mapH.map,
+  zoom: () => mapH.map.getZoom(),
+  okCount: () => okIdx.length,
+};
 
 // --- rendering --------------------------------------------------------------
 
@@ -188,8 +282,7 @@ function onSolutions(): void {
     sliderIdx = Math.floor(ok.length / 2);
   }
   slider.value = String(sliderIdx);
-  mapH.setOverlays(buildBandGeometry(state.structure, solutions));
-  mapH.setBranches(buildBranchGeometry(solutions));
+  renderGeometry();
   $('approx-badge').classList.toggle('hidden', !solutions.some((s) => s.approximate));
   renderInstant();
 }

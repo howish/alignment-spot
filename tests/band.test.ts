@@ -124,3 +124,20 @@ describe('buildBranchGeometry', () => {
     for (const line of g.clear) expect(line.geometry.coordinates.length).toBe(2);
   });
 });
+
+import { mergeSolutions } from '../src/band';
+
+describe('mergeSolutions', () => {
+  it('splices the refined window into the base list, sorted', () => {
+    const base = [ok(0, 270, 1000), ok(60000, 271, 1010), ok(120000, 272, 1020), ok(180000, 273, 1030)];
+    const fine = [ok(60000, 271, 1010), ok(90000, 271.5, 1015), ok(120000, 272, 1020)];
+    const merged = mergeSolutions(base, fine, 60000, 120000);
+    expect(merged.map((s) => s.t)).toEqual([0, 60000, 90000, 120000, 180000]);
+  });
+
+  it('leaves the base untouched when the window misses', () => {
+    const base = [ok(0, 270, 1000), ok(60000, 271, 1010)];
+    const merged = mergeSolutions(base, [], 500000, 600000);
+    expect(merged.length).toBe(2);
+  });
+});

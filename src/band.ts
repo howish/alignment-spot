@@ -17,6 +17,23 @@ export interface BandGeometry {
 
 const pos = (p: LatLon): Position => [p.lon, p.lat];
 
+/**
+ * Splice a finer-sampled time window into the base solution list (viewport
+ * refinement). Base samples inside [t0, t1] are replaced by the refined ones;
+ * the result stays sorted by time.
+ */
+export function mergeSolutions(
+  base: InstantSolution[],
+  refined: InstantSolution[],
+  t0: number,
+  t1: number,
+): InstantSolution[] {
+  const out = base.filter((s) => s.t < t0 || s.t > t1);
+  out.push(...refined);
+  out.sort((a, b) => a.t - b.t);
+  return out;
+}
+
 export interface BranchGeometry {
   clear: GeoJSON.Feature<GeoJSON.LineString>[];
   occluded: GeoJSON.Feature<GeoJSON.LineString>[];
