@@ -52,6 +52,17 @@ export function zonedDayWindow(iso: string, timeZone: string): { startMs: number
   };
 }
 
+/** Calendar date (YYYY-MM-DD) of an instant in `timeZone`. */
+export function isoDateInTz(ms: number, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(ms));
+  return parts; // en-CA formats as YYYY-MM-DD
+}
+
 /** Shift an ISO date by n days (calendar-safe). */
 export function shiftIsoDate(iso: string, days: number): string {
   const [y, m, d] = iso.split('-').map(Number);

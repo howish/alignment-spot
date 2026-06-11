@@ -1,9 +1,10 @@
-import { buildBandGeometry } from './band';
+import { buildTraceGeometry } from './band';
 import { compass, type LatLon } from './geo';
 import { getLang, LANGS, setLang, t } from './i18n';
 import { createMap } from './map';
 import type { InstantSolution } from './solver';
-import { isoDate, shiftIsoDate, tzAt, zonedDayWindow } from './time';
+import { wireSearch } from './search';
+import { isoDate, isoDateInTz, shiftIsoDate, tzAt, zonedDayWindow } from './time';
 import type { SolveRequest } from './worker';
 import SolverWorker from './worker?worker';
 import './style.css';
@@ -105,15 +106,15 @@ const structureTz = () =>
 
 function requestSolve(): void {
   if (!state.structure) return;
-  const { startMs, endMs } = zonedDayWindow(state.date, structureTz());
+  if (!anchorMs) recomputeAnchorFromDate();
   const adj = effectiveAdjHeight();
   const req: SolveRequest = {
     id: ++reqId,
     structure: { ...state.structure, height: state.height },
     ...(adj !== null ? { adjustedHeight: adj } : {}),
     kind: state.kind,
-    dayStartMs: startMs,
-    dayEndMs: endMs,
+    dayStartMs: anchorMs - WINDOW_HALF,
+    dayEndMs: anchorMs + WINDOW_HALF,
     stepMin: 1,
     eyeHeight: state.eyeHeight,
     mode: state.mode,
@@ -131,12 +132,39 @@ const mapH = createMap($('map'), (p) => {
   mapH.setStructure(p);
   $('hint').textContent = t('movePin');
   syncAdjUI();
+  recomputeAnchorFromDate(); // structure may sit in a different timezone
   requestSolve();
 });
 
 // --- rendering --------------------------------------------------------------
 
 let okIdx: number[] = [];
+
+// Solve window: a continuous interval centered on the anchor time, NOT a
+// calendar day — the moon's arc regularly spans midnight and must stay whole.
+const WINDOW_HALF = 12 * 3600000;
+let anchorMs = 0;
+/** after a re-anchor solve, restore the slider to this instant */
+let pendingFocusT: number | null = null;
+
+/** the instant currently under the slider thumb, if any */
+function currentSelectedMs(): number | null {
+  if (!okIdx.length || !solutions.length) return null;
+  return solutions[okIdx[Math.min(sliderIdx, okIdx.length - 1)]].t;
+}
+
+/**
+ * Anchor = chosen date + the currently-selected time of day ("now" before any
+ * selection). Centering on a time of day rather than noon keeps a moonrise-
+ * to-moonset arc whole across midnight.
+ */
+function recomputeAnchorFromDate(): void {
+  const tz = structureTz();
+  const { startMs } = zonedDayWindow(state.date, tz);
+  const ref = currentSelectedMs() ?? Date.now();
+  const refDayStart = zonedDayWindow(isoDateInTz(ref, tz), tz).startMs;
+  anchorMs = startMs + (ref - refDayStart);
+}
 
 function onSolutions(): void {
   okIdx = solutions.flatMap((s, i) => (s.status === 'ok' ? [i] : []));
@@ -156,11 +184,21 @@ function onSolutions(): void {
   slider.disabled = false;
   slider.min = '0';
   slider.max = String(ok.length - 1);
-  // keep the slider position proportionally when the day changes
-  if (sliderIdx > ok.length - 1) sliderIdx = Math.floor(ok.length / 2);
+  if (pendingFocusT !== null) {
+    // re-anchor solve: keep the user's selected instant under the thumb
+    const target = pendingFocusT;
+    pendingFocusT = null;
+    let best = 0;
+    ok.forEach((abs, i) => {
+      if (Math.abs(solutions[abs].t - target) < Math.abs(solutions[ok[best]].t - target)) best = i;
+    });
+    sliderIdx = best;
+  } else if (sliderIdx > ok.length - 1) {
+    sliderIdx = Math.floor(ok.length / 2);
+  }
   slider.value = String(sliderIdx);
-  mapH.setOverlays(buildBandGeometry(state.structure, solutions));
-  mapH.setAdjusted(adjustedSolutions ? buildBandGeometry(state.structure, adjustedSolutions) : null);
+  mapH.setOverlays(buildTraceGeometry(solutions));
+  mapH.setAdjusted(adjustedSolutions ? buildTraceGeometry(adjustedSolutions) : null);
   $('approx-badge').classList.toggle('hidden', !solutions.some((s) => s.approximate));
   renderInstant();
 }
@@ -173,11 +211,15 @@ function renderInstant(): void {
   // adjusted pass shares the sample grid, so the same index is the same instant
   const adj = adjustedSolutions?.[absIdx];
   mapH.setAdjustedSpot(adj?.status === 'ok' && adj.spot ? adj.spot : null);
-  const time = new Date(s.t).toLocaleTimeString(getLang(), {
+  const tz = structureTz();
+  let time = new Date(s.t).toLocaleTimeString(getLang(), {
     hour: '2-digit',
     minute: '2-digit',
-    timeZone: structureTz(),
+    timeZone: tz,
   });
+  // the window crosses midnight; flag samples on a neighboring calendar date
+  const dayDiff = isoDateInTz(s.t, tz) === state.date ? 0 : isoDateInTz(s.t, tz) > state.date ? 1 : -1;
+  if (dayDiff !== 0) time += dayDiff > 0 ? ' (+1)' : ' (−1)';
   $('time-label').textContent = time;
   $('status').textContent = '';
   if (s.spot) {
@@ -210,6 +252,7 @@ function syncAdjUI(): void {
 
 function applyStaticText(): void {
   $('hint').textContent = state.structure ? t('movePin') : t('tapToPlace');
+  ($('search-input') as unknown as HTMLInputElement).placeholder = t('searchPlaceholder');
   $('height-wrap').title = t('structureHeight');
   ($('height-input') as unknown as HTMLInputElement).placeholder = 'm';
   $('sun-btn').textContent = `☀️ ${t('sun')}`;
@@ -232,12 +275,28 @@ function wire(): void {
     sliderIdx = Number(slider.value);
     renderInstant();
   });
+  // on release near a window edge, recenter the window on the selected time
+  slider.addEventListener('change', () => {
+    const ok = okIdx;
+    if (!ok.length) return;
+    const t = solutions[ok[Math.min(sliderIdx, ok.length - 1)]].t;
+    const nearEdge = Math.min(t - (anchorMs - WINDOW_HALF), anchorMs + WINDOW_HALF - t) < 90 * 60000;
+    if (!nearEdge) return;
+    anchorMs = t;
+    state.date = isoDateInTz(t, structureTz());
+    ($('date-input') as unknown as HTMLInputElement).value = state.date;
+    saveState();
+    pendingFocusT = t;
+    requestSolve();
+  });
 
   const dateInput = $('date-input') as unknown as HTMLInputElement;
   dateInput.value = state.date;
   dateInput.addEventListener('change', () => {
     state.date = dateInput.value || isoDate(today);
     saveState();
+    recomputeAnchorFromDate();
+    pendingFocusT = anchorMs; // land on the same time of day
     requestSolve();
   });
   $('date-prev').addEventListener('click', () => shiftDate(-1));
@@ -246,6 +305,8 @@ function wire(): void {
     state.date = shiftIsoDate(state.date, days);
     dateInput.value = state.date;
     saveState();
+    recomputeAnchorFromDate();
+    pendingFocusT = anchorMs; // land on the same time of day
     requestSolve();
   }
 
@@ -282,6 +343,16 @@ function wire(): void {
     syncAdjUI(); // side-bar range follows the typed height
     if (heightTimer) clearTimeout(heightTimer);
     heightTimer = setTimeout(requestSolve, 400);
+  });
+
+  wireSearch({
+    input: $('search-input') as unknown as HTMLInputElement,
+    results: $('search-results'),
+    getBias: () => {
+      const c = mapH.map.getCenter();
+      return { lat: c.lat, lon: c.lng };
+    },
+    onPick: (hit) => mapH.map.flyTo({ center: [hit.lon, hit.lat], zoom: 15 }),
   });
 
   // vertical side bar: align with a lower point on the structure (dashed line)

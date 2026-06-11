@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isoDate, shiftIsoDate, tzAt, zonedDayWindow, zonedMidnightUtcMs } from '../src/time';
+import { isoDate, isoDateInTz, shiftIsoDate, tzAt, zonedDayWindow, zonedMidnightUtcMs } from '../src/time';
 
 describe('isoDate', () => {
   it('zero-pads', () => {
@@ -19,6 +19,15 @@ describe('tzAt', () => {
   it('resolves Taiwan and Japan', () => {
     expect(tzAt(25.03, 121.56)).toBe('Asia/Taipei');
     expect(tzAt(35.68, 139.76)).toBe('Asia/Tokyo');
+  });
+});
+
+describe('isoDateInTz', () => {
+  it('reports the calendar date in the given zone', () => {
+    // 2026-06-10T20:00Z = 2026-06-11 04:00 in Taipei
+    const ms = Date.UTC(2026, 5, 10, 20);
+    expect(isoDateInTz(ms, 'Asia/Taipei')).toBe('2026-06-11');
+    expect(isoDateInTz(ms, 'UTC')).toBe('2026-06-10');
   });
 });
 

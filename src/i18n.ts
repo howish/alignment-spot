@@ -4,6 +4,7 @@ const dict = {
   'zh-TW': {
     appName: '對齊點 Alignment Spot',
     tapToPlace: '點地圖放置目標（塔、山頂…）',
+    searchPlaceholder: '搜尋地點…',
     structureHeight: '目標高度（公尺）',
     sun: '太陽',
     moon: '月亮',
@@ -30,6 +31,7 @@ const dict = {
   ja: {
     appName: 'Alignment Spot',
     tapToPlace: '地図をタップしてターゲットを置く（塔・山頂…）',
+    searchPlaceholder: '場所を検索…',
     structureHeight: 'ターゲットの高さ（m）',
     sun: '太陽',
     moon: '月',
@@ -56,6 +58,7 @@ const dict = {
   en: {
     appName: 'Alignment Spot',
     tapToPlace: 'Tap the map to place the target (tower, summit…)',
+    searchPlaceholder: 'Search places…',
     structureHeight: 'Target height (m)',
     sun: 'Sun',
     moon: 'Moon',

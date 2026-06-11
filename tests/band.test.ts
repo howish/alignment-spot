@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildBandGeometry } from '../src/band';
+import { buildTraceGeometry } from '../src/band';
 import type { InstantSolution } from '../src/solver';
-
-const STRUCT = { lat: 24.0, lon: 121.0 };
 
 function ok(t: number, az: number, d: number, occluded = false): InstantSolution {
   return {
@@ -30,26 +28,21 @@ const gap = (t: number): InstantSolution => ({
   approximate: false,
 });
 
-describe('buildBandGeometry', () => {
-  it('builds one closed polygon and one line for a contiguous run', () => {
-    const g = buildBandGeometry(STRUCT, [ok(0, 270, 1000), ok(1, 271, 1010), ok(2, 272, 1020)]);
-    expect(g.band.length).toBe(1);
-    const ring = g.band[0].geometry.coordinates[0];
-    expect(ring.length).toBe(7); // 3 near + 3 far + closing vertex
-    expect(ring[0]).toEqual(ring[ring.length - 1]);
+describe('buildTraceGeometry', () => {
+  it('builds one line for a contiguous run', () => {
+    const g = buildTraceGeometry([ok(0, 270, 1000), ok(1, 271, 1010), ok(2, 272, 1020)]);
     expect(g.clearLines.length).toBe(1);
     expect(g.clearLines[0].geometry.coordinates.length).toBe(3);
     expect(g.occludedLines.length).toBe(0);
   });
 
   it('splits on gaps', () => {
-    const g = buildBandGeometry(STRUCT, [ok(0, 270, 1000), ok(1, 271, 1010), gap(2), ok(3, 280, 900), ok(4, 281, 910)]);
-    expect(g.band.length).toBe(2);
+    const g = buildTraceGeometry([ok(0, 270, 1000), ok(1, 271, 1010), gap(2), ok(3, 280, 900), ok(4, 281, 910)]);
     expect(g.clearLines.length).toBe(2);
   });
 
   it('separates occluded runs and keeps them connected', () => {
-    const g = buildBandGeometry(STRUCT, [
+    const g = buildTraceGeometry([
       ok(0, 270, 1000),
       ok(1, 271, 1010),
       ok(2, 272, 1020, true),
@@ -62,5 +55,11 @@ describe('buildBandGeometry', () => {
     const clearEnd = g.clearLines[0].geometry.coordinates.at(-1);
     const occStart = g.occludedLines[0].geometry.coordinates[0];
     expect(occStart).toEqual(clearEnd);
+  });
+
+  it('a single isolated ok sample produces no degenerate line', () => {
+    const g = buildTraceGeometry([gap(0), ok(1, 270, 1000), gap(2)]);
+    expect(g.clearLines.length).toBe(0);
+    expect(g.occludedLines.length).toBe(0);
   });
 });

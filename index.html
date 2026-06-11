@@ -12,9 +12,13 @@
     <div id="map"></div>
 
     <div id="topbar">
-      <span id="hint"></span>
+      <div id="search-wrap">
+        <input id="search-input" type="search" autocomplete="off" />
+        <div id="search-results" class="hidden"></div>
+      </div>
       <span id="approx-badge" class="badge hidden"></span>
     </div>
+    <div id="hint-row"><span id="hint"></span></div>
 
     <div id="side-slider" class="hidden">
       <span id="adj-value" class="adj-bubble"></span>
