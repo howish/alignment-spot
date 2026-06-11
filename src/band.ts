@@ -17,6 +17,82 @@ export interface BandGeometry {
 
 const pos = (p: LatLon): Position => [p.lon, p.lat];
 
+export interface BranchGeometry {
+  clear: GeoJSON.Feature<GeoJSON.LineString>[];
+  occluded: GeoJSON.Feature<GeoJSON.LineString>[];
+}
+
+/**
+ * Trace EVERY crossing (not just the nearest) over time as thin branch lines.
+ * Branch identity across minutes is recovered by greedy nearest-distance
+ * matching; at shallow body altitudes a far solution can sweep kilometers per
+ * minute, so the tolerance is relative — anything beyond it starts a new run
+ * rather than drawing a false connection.
+ */
+export function buildBranchGeometry(solutions: InstantSolution[]): BranchGeometry {
+  interface Run {
+    lastD: number;
+    occluded: boolean;
+    coords: Position[];
+  }
+  const clear: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+  const occluded: GeoJSON.Feature<GeoJSON.LineString>[] = [];
+  let active: Run[] = [];
+
+  const finalize = (run: Run) => {
+    if (run.coords.length >= 2) {
+      (run.occluded ? occluded : clear).push({
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'LineString', coordinates: run.coords },
+      });
+    }
+  };
+  const finalizeAll = () => {
+    active.forEach(finalize);
+    active = [];
+  };
+
+  for (const s of solutions) {
+    if (s.status !== 'ok' || s.all.length === 0) {
+      finalizeAll();
+      continue;
+    }
+    const matchTol = (a: number, b: number) => Math.max(1000, 0.25 * Math.min(a, b));
+    const taken = new Set<Run>();
+    const next: Run[] = [];
+    for (const spot of s.all) {
+      let best: Run | null = null;
+      for (const run of active) {
+        if (taken.has(run)) continue;
+        const diff = Math.abs(spot.d - run.lastD);
+        if (diff <= matchTol(spot.d, run.lastD) && (!best || diff < Math.abs(spot.d - best.lastD))) {
+          best = run;
+        }
+      }
+      const p = pos(spot);
+      if (best) {
+        taken.add(best);
+        if (best.occluded !== spot.occluded) {
+          const last = best.coords[best.coords.length - 1];
+          finalize(best);
+          best.coords = [last]; // shared vertex so the styled runs connect
+          best.occluded = spot.occluded;
+        }
+        best.coords.push(p);
+        best.lastD = spot.d;
+        next.push(best);
+      } else {
+        next.push({ lastD: spot.d, occluded: spot.occluded, coords: [p] });
+      }
+    }
+    for (const run of active) if (!taken.has(run)) finalize(run);
+    active = next;
+  }
+  finalizeAll();
+  return { clear, occluded };
+}
+
 export function buildBandGeometry(structure: LatLon, solutions: InstantSolution[]): BandGeometry {
   const band: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
   const clearLines: GeoJSON.Feature<GeoJSON.LineString>[] = [];

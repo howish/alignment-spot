@@ -3,6 +3,7 @@
 // node; the fetch/decode path needs a browser (OffscreenCanvas) context.
 
 export const DEM_ZOOM = 12; // ~38 m/px at the equator; plenty for a 50 m march
+export const DEM_ZOOM_FAR = 10; // ~153 m/px; used beyond ~25 km where it's ample
 export const TILE_SIZE = 256;
 const TILE_URL = (z: number, x: number, y: number) =>
   `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
@@ -38,14 +39,14 @@ export function bilinear(grid: Float32Array, w: number, h: number, px: number, p
   );
 }
 
-export type ElevationSampler = (lat: number, lon: number) => Promise<number | null>;
+export type ElevationSampler = (lat: number, lon: number, coarse?: boolean) => Promise<number | null>;
 
 /**
  * Tile-cached sampler. Failed tiles are remembered as null so a dead network
  * degrades to the flat-terrain fallback instead of hammering S3.
  */
-/** decoded tiles kept in RAM; 64 × 256 KB ≈ 16 MB ceiling */
-const MAX_CACHED_TILES = 64;
+/** decoded tiles kept in RAM; 128 × 256 KB ≈ 32 MB ceiling (100 km rays span more tiles) */
+const MAX_CACHED_TILES = 128;
 
 export function createTileSampler(fetchImpl: typeof fetch = fetch): ElevationSampler {
   const tiles = new Map<string, Promise<Float32Array | null>>();
@@ -69,14 +70,15 @@ export function createTileSampler(fetchImpl: typeof fetch = fetch): ElevationSam
     }
   }
 
-  return async (lat, lon) => {
-    const { x, y } = lonLatToTileXY(lon, lat, DEM_ZOOM);
+  return async (lat, lon, coarse = false) => {
+    const zoom = coarse ? DEM_ZOOM_FAR : DEM_ZOOM;
+    const { x, y } = lonLatToTileXY(lon, lat, zoom);
     const tx = Math.floor(x);
     const ty = Math.floor(y);
-    const key = `${tx}/${ty}`;
+    const key = `${zoom}/${tx}/${ty}`;
     let tile = tiles.get(key);
     if (!tile) {
-      tile = loadTile(DEM_ZOOM, tx, ty);
+      tile = loadTile(zoom, tx, ty);
     } else {
       tiles.delete(key); // re-insert to refresh LRU recency
     }

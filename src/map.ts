@@ -2,7 +2,7 @@
 
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import type { BandGeometry } from './band';
+import type { BandGeometry, BranchGeometry } from './band';
 import type { LatLon } from './geo';
 
 const STYLE_URL = 'https://tiles.openfreemap.org/styles/liberty';
@@ -12,7 +12,9 @@ export interface MapHandles {
   map: maplibregl.Map;
   setStructure(p: LatLon | null): void;
   setOverlays(geom: BandGeometry | null): void;
+  setBranches(geom: BranchGeometry | null): void;
   setSpot(p: LatLon | null, occluded: boolean): void;
+  setBranchSpots(pts: (LatLon & { occluded: boolean })[]): void;
   setBodyKind(kind: 'sun' | 'moon'): void;
 }
 
@@ -43,6 +45,7 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
   // set once the sources/layers exist; latest data is replayed at that point.
   let ready = false;
   let pendingGeom: BandGeometry | null = null;
+  let pendingBranches: BranchGeometry | null = null;
 
   // Defer single taps so a double-click zoom doesn't also re-place the pin.
   let tapTimer: ReturnType<typeof setTimeout> | null = null;
@@ -62,15 +65,31 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
 
   map.on('load', () => {
     map.addSource('band', { type: 'geojson', data: EMPTY });
+    map.addSource('branch-line', { type: 'geojson', data: EMPTY });
+    map.addSource('branch-occluded-line', { type: 'geojson', data: EMPTY });
     map.addSource('clear-line', { type: 'geojson', data: EMPTY });
     map.addSource('occluded-line', { type: 'geojson', data: EMPTY });
     map.addSource('spot', { type: 'geojson', data: EMPTY });
+    map.addSource('branch-spot', { type: 'geojson', data: EMPTY });
 
     map.addLayer({
       id: 'band-fill',
       type: 'fill',
       source: 'band',
       paint: { 'fill-color': COLORS.sun.band, 'fill-opacity': 0.22 },
+    });
+    // secondary crossings (e.g. a far mountain slope): thin branches under the main trace
+    map.addLayer({
+      id: 'branch-line',
+      type: 'line',
+      source: 'branch-line',
+      paint: { 'line-color': COLORS.sun.line, 'line-width': 1.2, 'line-opacity': 0.75 },
+    });
+    map.addLayer({
+      id: 'branch-occluded-line',
+      type: 'line',
+      source: 'branch-occluded-line',
+      paint: { 'line-color': '#9ca3af', 'line-width': 1.2, 'line-dasharray': [2, 2], 'line-opacity': 0.8 },
     });
 
     map.addLayer({
@@ -106,8 +125,21 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
         'circle-stroke-width': 2,
       },
     });
+    // small hollow dots: secondary crossings at the selected instant
+    map.addLayer({
+      id: 'branch-spot-dot',
+      type: 'circle',
+      source: 'branch-spot',
+      paint: {
+        'circle-radius': 3,
+        'circle-color': '#ffffff',
+        'circle-stroke-color': ['case', ['get', 'occluded'], '#9ca3af', COLORS.sun.line],
+        'circle-stroke-width': 1.5,
+      },
+    });
     ready = true;
     setOverlays(pendingGeom);
+    setBranches(pendingBranches);
     setBodyKind(kind);
   });
 
@@ -119,6 +151,25 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
     src('band')?.setData(geom ? { type: 'FeatureCollection', features: geom.band } : EMPTY);
     src('clear-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.clearLines } : EMPTY);
     src('occluded-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.occludedLines } : EMPTY);
+  }
+
+  function setBranches(geom: BranchGeometry | null): void {
+    pendingBranches = geom;
+    if (!ready) return;
+    src('branch-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.clear } : EMPTY);
+    src('branch-occluded-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.occluded } : EMPTY);
+  }
+
+  function setBranchSpots(pts: (LatLon & { occluded: boolean })[]): void {
+    const data: GeoJSON.FeatureCollection = {
+      type: 'FeatureCollection',
+      features: pts.map((p) => ({
+        type: 'Feature',
+        properties: { occluded: p.occluded },
+        geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+      })),
+    };
+    src('branch-spot')?.setData(data);
   }
 
   function setSpot(p: LatLon | null, occluded: boolean): void {
@@ -148,10 +199,12 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
     kind = k;
     if (!ready) return;
     map.setPaintProperty('band-fill', 'fill-color', COLORS[kind].band);
+    map.setPaintProperty('branch-line', 'line-color', COLORS[kind].line);
+    map.setPaintProperty('branch-spot-dot', 'circle-stroke-color', ['case', ['get', 'occluded'], '#9ca3af', COLORS[kind].line]);
     map.setPaintProperty('clear-line', 'line-color', COLORS[kind].line);
     map.setPaintProperty('spot-halo', 'circle-color', ['case', ['get', 'occluded'], '#9ca3af', COLORS[kind].line]);
     map.setPaintProperty('spot-dot', 'circle-color', ['case', ['get', 'occluded'], '#6b7280', COLORS[kind].line]);
   }
 
-  return { map, setStructure, setOverlays, setSpot, setBodyKind };
+  return { map, setStructure, setOverlays, setBranches, setSpot, setBranchSpots, setBodyKind };
 }

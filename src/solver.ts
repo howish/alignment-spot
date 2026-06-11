@@ -62,6 +62,9 @@ interface Profile {
   approximate: boolean;
 }
 
+/** beyond this, coarse DEM tiles are plenty and keep long rays cheap */
+const FAR_DEM_DISTANCE = 25000;
+
 async function marchProfile(
   cfg: SolverConfig,
   backAz: number,
@@ -72,7 +75,7 @@ async function marchProfile(
   let approximate = false;
   for (let dist = 0; dist <= cfg.maxDistance; dist += cfg.step) {
     const p = dist === 0 ? cfg.structure : destination(cfg.structure, backAz, dist);
-    const e = await dem(p.lat, p.lon);
+    const e = await dem(p.lat, p.lon, dist > FAR_DEM_DISTANCE);
     if (e === null) approximate = true;
     d.push(dist);
     elev.push(e ?? 0);

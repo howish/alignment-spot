@@ -1,4 +1,4 @@
-import { buildBandGeometry } from './band';
+import { buildBandGeometry, buildBranchGeometry } from './band';
 import { compass, type LatLon } from './geo';
 import { getLang, LANGS, setLang, t } from './i18n';
 import { createMap } from './map';
@@ -23,6 +23,8 @@ interface AppState {
   mode: Mode;
   eyeHeight: number;
   refraction: boolean;
+  /** solver search range in meters */
+  maxDistance: number;
 }
 
 const today = new Date();
@@ -37,6 +39,7 @@ function loadState(): AppState {
     mode: 'bottom-touch',
     eyeHeight: 1.6,
     refraction: true,
+    maxDistance: 30000,
   };
   try {
     const raw = localStorage.getItem('state');
@@ -61,6 +64,7 @@ function loadState(): AppState {
       mode: p.mode === 'center' ? 'center' : 'bottom-touch',
       eyeHeight: num(p.eyeHeight, def.eyeHeight),
       refraction: typeof p.refraction === 'boolean' ? p.refraction : true,
+      maxDistance: [30000, 50000, 100000].includes(p.maxDistance) ? p.maxDistance : def.maxDistance,
     };
   } catch {
     return def;
@@ -99,6 +103,7 @@ function requestSolve(): void {
   const req: SolveRequest = {
     id: ++reqId,
     structure: { ...state.structure, height: state.height },
+    maxDistance: state.maxDistance,
     kind: state.kind,
     dayStartMs: anchorMs - WINDOW_HALF,
     dayEndMs: anchorMs + WINDOW_HALF,
@@ -159,7 +164,9 @@ function onSolutions(): void {
   const slider = $('time-slider') as unknown as HTMLInputElement;
   if (ok.length === 0 || !state.structure) {
     mapH.setOverlays(null);
+    mapH.setBranches(null);
     mapH.setSpot(null, false);
+    mapH.setBranchSpots([]);
     slider.disabled = true;
     $('status').textContent = solutions.length ? t('noAlignment') : '';
     $('detail').classList.add('hidden');
@@ -182,6 +189,7 @@ function onSolutions(): void {
   }
   slider.value = String(sliderIdx);
   mapH.setOverlays(buildBandGeometry(state.structure, solutions));
+  mapH.setBranches(buildBranchGeometry(solutions));
   $('approx-badge').classList.toggle('hidden', !solutions.some((s) => s.approximate));
   renderInstant();
 }
@@ -202,6 +210,7 @@ function renderInstant(): void {
   if (dayDiff !== 0) time += dayDiff > 0 ? ' (+1)' : ' (−1)';
   $('time-label').textContent = time;
   $('status').textContent = '';
+  mapH.setBranchSpots(s.all.slice(1).map((sp) => ({ lat: sp.lat, lon: sp.lon, occluded: sp.occluded })));
   if (s.spot) {
     mapH.setSpot(s.spot, s.spot.occluded);
     const km = (s.spot.d / 1000).toFixed(s.spot.d < 2000 ? 2 : 1);
@@ -254,6 +263,7 @@ function applyStaticText(): void {
   $('mode-bottom-label').textContent = t('modeBottom');
   $('mode-center-label').textContent = t('modeCenter');
   $('eye-label').textContent = t('eyeHeight');
+  $('range-label').textContent = t('searchRange');
   $('refraction-label').textContent = t('refraction');
   $('lang-label').textContent = t('language');
   document.title = t('appName');
@@ -386,6 +396,14 @@ function wire(): void {
     saveState();
     requestSolve();
   });
+  const rangeSelect = $('range-select') as unknown as HTMLSelectElement;
+  rangeSelect.value = String(state.maxDistance);
+  rangeSelect.addEventListener('change', () => {
+    state.maxDistance = Number(rangeSelect.value) || 30000;
+    saveState();
+    requestSolve();
+  });
+
   const refractionInput = $('refraction-input') as unknown as HTMLInputElement;
   refractionInput.checked = state.refraction;
   refractionInput.addEventListener('change', () => {

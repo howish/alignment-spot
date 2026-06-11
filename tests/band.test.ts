@@ -71,3 +71,56 @@ describe('buildBandGeometry', () => {
     expect(g.occludedLines.length).toBe(0);
   });
 });
+
+import { buildBranchGeometry } from '../src/band';
+
+function okMulti(t: number, ds: { d: number; occluded?: boolean }[]): InstantSolution {
+  const spots = ds.map(({ d, occluded = false }) => ({ lat: 24.0, lon: 121.0 + d / 100000, d, occluded }));
+  return {
+    t,
+    az: 270,
+    bodyAlt: 5,
+    semidia: 0.25,
+    status: 'ok',
+    spot: spots[0],
+    all: spots,
+    tolerance: null,
+    approximate: false,
+  };
+}
+
+describe('buildBranchGeometry', () => {
+  it('traces parallel branches with per-branch occlusion styling', () => {
+    const g = buildBranchGeometry([
+      okMulti(0, [{ d: 1000 }, { d: 5000, occluded: true }]),
+      okMulti(1, [{ d: 1010 }, { d: 5100, occluded: true }]),
+      okMulti(2, [{ d: 1020 }, { d: 5200, occluded: true }]),
+    ]);
+    expect(g.clear.length).toBe(1);
+    expect(g.clear[0].geometry.coordinates.length).toBe(3);
+    expect(g.occluded.length).toBe(1);
+    expect(g.occluded[0].geometry.coordinates.length).toBe(3);
+  });
+
+  it('starts a new run when a branch appears mid-sequence', () => {
+    const g = buildBranchGeometry([
+      okMulti(0, [{ d: 1000 }]),
+      okMulti(1, [{ d: 1010 }, { d: 5000 }]),
+      okMulti(2, [{ d: 1020 }, { d: 5050 }]),
+    ]);
+    expect(g.clear.length).toBe(2);
+    const lengths = g.clear.map((l) => l.geometry.coordinates.length).sort();
+    expect(lengths).toEqual([2, 3]);
+  });
+
+  it('breaks the line on a distance jump beyond tolerance', () => {
+    const g = buildBranchGeometry([
+      okMulti(0, [{ d: 5000 }]),
+      okMulti(1, [{ d: 5050 }]),
+      okMulti(2, [{ d: 12000 }]), // 7 km jump >> 25% tolerance: no false connection
+      okMulti(3, [{ d: 12100 }]),
+    ]);
+    expect(g.clear.length).toBe(2);
+    for (const line of g.clear) expect(line.geometry.coordinates.length).toBe(2);
+  });
+});

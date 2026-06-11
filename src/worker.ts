@@ -8,6 +8,8 @@ import { DEFAULT_CONFIG, solveDayHeights, type AlignMode, type InstantSolution }
 export interface SolveRequest {
   id: number;
   structure: { lat: number; lon: number; height: number };
+  /** search range in meters (solver maxDistance); default 30 km */
+  maxDistance?: number;
   kind: BodyKind;
   dayStartMs: number;
   dayEndMs: number;
@@ -48,6 +50,7 @@ self.onmessage = async (ev: MessageEvent<{ type: 'solve'; req: SolveRequest }>) 
     eyeHeight: req.eyeHeight,
     mode: req.mode,
     refraction: req.refraction,
+    ...(req.maxDistance ? { maxDistance: req.maxDistance } : {}),
   };
   const aborted = () => currentId !== req.id; // bail as soon as a newer request lands
   const layers = await solveDayHeights(
