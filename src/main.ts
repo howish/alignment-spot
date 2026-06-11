@@ -175,7 +175,6 @@ function onSolutions(): void {
     mapH.setAdjusted(null);
     mapH.setSpot(null, false);
     mapH.setAdjustedSpot(null);
-    mapH.setSightline(null, null);
     slider.disabled = true;
     $('status').textContent = solutions.length ? t('noAlignment') : '';
     $('detail').classList.add('hidden');
@@ -224,7 +223,6 @@ function renderInstant(): void {
   $('status').textContent = '';
   if (s.spot) {
     mapH.setSpot(s.spot, s.spot.occluded);
-    mapH.setSightline(state.structure, s.spot);
     const km = (s.spot.d / 1000).toFixed(s.spot.d < 2000 ? 2 : 1);
     const azBody = Math.round(s.az);
     $('detail').classList.remove('hidden');

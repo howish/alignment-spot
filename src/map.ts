@@ -13,7 +13,6 @@ export interface MapHandles {
   setStructure(p: LatLon | null): void;
   setOverlays(geom: TraceGeometry | null): void;
   setAdjusted(geom: TraceGeometry | null): void;
-  setSightline(structure: LatLon | null, spot: LatLon | null): void;
   setSpot(p: LatLon | null, occluded: boolean): void;
   setAdjustedSpot(p: LatLon | null): void;
   setBodyKind(kind: 'sun' | 'moon'): void;
@@ -42,6 +41,9 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
 
   let marker: maplibregl.Marker | null = null;
   let kind: 'sun' | 'moon' = 'sun';
+  // isStyleLoaded() flickers false during repaints, so gate on our own flag
+  // set once the sources/layers exist; latest data is replayed at that point.
+  let ready = false;
   let pendingGeom: TraceGeometry | null = null;
   let pendingAdjusted: TraceGeometry | null = null;
 
@@ -66,7 +68,6 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
     map.addSource('occluded-line', { type: 'geojson', data: EMPTY });
     map.addSource('adjusted-line', { type: 'geojson', data: EMPTY });
     map.addSource('adjusted-occluded-line', { type: 'geojson', data: EMPTY });
-    map.addSource('sightline', { type: 'geojson', data: EMPTY });
     map.addSource('spot', { type: 'geojson', data: EMPTY });
     map.addSource('adjusted-spot', { type: 'geojson', data: EMPTY });
 
@@ -94,12 +95,6 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
       type: 'line',
       source: 'adjusted-occluded-line',
       paint: { 'line-color': '#9ca3af', 'line-width': 1.5, 'line-dasharray': [1, 2] },
-    });
-    map.addLayer({
-      id: 'sightline',
-      type: 'line',
-      source: 'sightline',
-      paint: { 'line-color': '#111827', 'line-width': 1, 'line-dasharray': [1, 2], 'line-opacity': 0.6 },
     });
     map.addLayer({
       id: 'spot-halo',
@@ -134,26 +129,24 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
         'circle-stroke-width': 2,
       },
     });
-    if (pendingGeom) setOverlays(pendingGeom);
-    if (pendingAdjusted) setAdjusted(pendingAdjusted);
+    ready = true;
+    setOverlays(pendingGeom);
+    setAdjusted(pendingAdjusted);
+    setBodyKind(kind);
   });
 
   const src = (id: string) => map.getSource(id) as maplibregl.GeoJSONSource | undefined;
 
   function setOverlays(geom: TraceGeometry | null): void {
-    if (!map.isStyleLoaded() && geom) {
-      pendingGeom = geom;
-      return;
-    }
+    pendingGeom = geom;
+    if (!ready) return;
     src('clear-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.clearLines } : EMPTY);
     src('occluded-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.occludedLines } : EMPTY);
   }
 
   function setAdjusted(geom: TraceGeometry | null): void {
-    if (!map.isStyleLoaded() && geom) {
-      pendingAdjusted = geom;
-      return;
-    }
+    pendingAdjusted = geom;
+    if (!ready) return;
     src('adjusted-line')?.setData(geom ? { type: 'FeatureCollection', features: geom.clearLines } : EMPTY);
     src('adjusted-occluded-line')?.setData(
       geom ? { type: 'FeatureCollection', features: geom.occludedLines } : EMPTY,
@@ -168,29 +161,6 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
         }
       : EMPTY;
     src('adjusted-spot')?.setData(data);
-  }
-
-  function setSightline(structure: LatLon | null, spot: LatLon | null): void {
-    const data: GeoJSON.FeatureCollection =
-      structure && spot
-        ? {
-            type: 'FeatureCollection',
-            features: [
-              {
-                type: 'Feature',
-                properties: {},
-                geometry: {
-                  type: 'LineString',
-                  coordinates: [
-                    [structure.lon, structure.lat],
-                    [spot.lon, spot.lat],
-                  ],
-                },
-              },
-            ],
-          }
-        : EMPTY;
-    src('sightline')?.setData(data);
   }
 
   function setSpot(p: LatLon | null, occluded: boolean): void {
@@ -218,7 +188,7 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
 
   function setBodyKind(k: 'sun' | 'moon'): void {
     kind = k;
-    if (!map.isStyleLoaded()) return;
+    if (!ready) return;
     map.setPaintProperty('clear-line', 'line-color', COLORS[kind].line);
     map.setPaintProperty('adjusted-line', 'line-color', COLORS[kind].line);
     map.setPaintProperty('spot-halo', 'circle-color', ['case', ['get', 'occluded'], '#9ca3af', COLORS[kind].line]);
@@ -226,5 +196,5 @@ export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): M
     map.setPaintProperty('adjusted-spot-dot', 'circle-stroke-color', COLORS[kind].line);
   }
 
-  return { map, setStructure, setOverlays, setAdjusted, setSightline, setSpot, setAdjustedSpot, setBodyKind };
+  return { map, setStructure, setOverlays, setAdjusted, setSpot, setAdjustedSpot, setBodyKind };
 }
