@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ElevationSampler } from '../src/dem';
 import { bodySample, sampleDay, type BodySample } from '../src/ephemeris';
 import { apparentAltitude, distanceM, normalizeAz } from '../src/geo';
-import { DEFAULT_CONFIG, solveDay, solveInstant, type SolverConfig } from '../src/solver';
+import { DEFAULT_CONFIG, solveDay, solveDayHeights, solveInstant, solveInstantHeights, type SolverConfig } from '../src/solver';
 
 const STRUCT = { lat: 24.0, lon: 121.0, height: 100 };
 const cfg: SolverConfig = { ...DEFAULT_CONFIG, structure: STRUCT };
@@ -136,6 +136,32 @@ describe('terrain effects', () => {
     const upSol = await solveInstant(cfg, body(4), plateau);
     expect(upSol.status).toBe('ok');
     expect(upSol.spot!.d).toBeLessThan(flatSol.spot!.d);
+  });
+});
+
+describe('multi-height solve', () => {
+  it('matches individual solves on hilly terrain', async () => {
+    const hill: ElevationSampler = async (lat, lon) => {
+      const d = distanceM(STRUCT, { lat, lon });
+      return d > 150 && d < 450 ? 95 : 0;
+    };
+    const b = body(5);
+    const multi = await solveInstantHeights(cfg, [100, 50], b, hill);
+    const lone100 = await solveInstant(cfg, b, hill);
+    const lone50 = await solveInstant({ ...cfg, structure: { ...STRUCT, height: 50 } }, b, hill);
+    expect(multi[0]).toEqual(lone100);
+    expect(multi[1]).toEqual(lone50);
+  });
+
+  it('solveDayHeights returns one aligned layer per height', async () => {
+    const layers = await solveDayHeights(cfg, [100, 50], [body(-2), body(5)], flat);
+    expect(layers.length).toBe(2);
+    expect(layers[0].length).toBe(2);
+    expect(layers[1].length).toBe(2);
+    expect(layers[0][0].status).toBe('body-too-low');
+    expect(layers[1][1].status).toBe('ok');
+    // lower alignment point -> closer spot at the same instant
+    expect(layers[1][1].spot!.d).toBeLessThan(layers[0][1].spot!.d);
   });
 });
 

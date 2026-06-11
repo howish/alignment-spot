@@ -121,23 +121,26 @@ function isOccluded(profile: Profile, baseElev: number, cfg: SolverConfig, d: nu
   return false;
 }
 
-export async function solveInstant(
-  cfg: SolverConfig,
-  body: BodySample,
-  dem: ElevationSampler,
-): Promise<InstantSolution> {
+const tooLow = (body: BodySample): InstantSolution => ({
+  t: body.t,
+  az: body.az,
+  bodyAlt: body.alt,
+  semidia: body.semidia,
+  status: 'body-too-low',
+  spot: null,
+  all: [],
+  tolerance: null,
+  approximate: false,
+});
+
+/** Solve one instant against an already-marched terrain profile. */
+function solveFromProfile(cfg: SolverConfig, body: BodySample, backAz: number, profile: Profile): InstantSolution {
   const base: Omit<InstantSolution, 'status' | 'spot' | 'all' | 'tolerance' | 'approximate'> = {
     t: body.t,
     az: body.az,
     bodyAlt: body.alt,
     semidia: body.semidia,
   };
-  if (body.alt <= cfg.minBodyAlt) {
-    return { ...base, status: 'body-too-low', spot: null, all: [], tolerance: null, approximate: false };
-  }
-
-  const backAz = normalizeAz(body.az + 180);
-  const profile = await marchProfile(cfg, backAz, dem);
   const baseElev = profile.elev[0];
 
   // Where the disk's reference point sits on the tip…
@@ -176,11 +179,57 @@ export async function solveInstant(
   };
 }
 
+export async function solveInstant(
+  cfg: SolverConfig,
+  body: BodySample,
+  dem: ElevationSampler,
+): Promise<InstantSolution> {
+  return (await solveInstantHeights(cfg, [cfg.structure.height], body, dem))[0];
+}
+
 /**
- * Solve a full day of samples; onProgress(0..1) fires between instants.
- * Output order matches input order. `shouldAbort` lets a superseded request
- * stop wasting tile fetches; the partial result is returned (caller drops it).
+ * Solve one instant for several structure heights at once. The terrain march
+ * along the back-azimuth is height-independent, so the (DEM-bound) profile is
+ * built once and reused — N heights cost barely more than one.
  */
+export async function solveInstantHeights(
+  cfg: SolverConfig,
+  heights: number[],
+  body: BodySample,
+  dem: ElevationSampler,
+): Promise<InstantSolution[]> {
+  if (body.alt <= cfg.minBodyAlt) return heights.map(() => tooLow(body));
+  const backAz = normalizeAz(body.az + 180);
+  const profile = await marchProfile(cfg, backAz, dem);
+  return heights.map((h) =>
+    solveFromProfile({ ...cfg, structure: { ...cfg.structure, height: h } }, body, backAz, profile),
+  );
+}
+
+/**
+ * Solve a full day of samples for one or more heights; onProgress(0..1)
+ * fires between instants. Output: one array per height, each matching the
+ * input sample order. `shouldAbort` lets a superseded request stop wasting
+ * tile fetches; the partial result is returned (caller drops it).
+ */
+export async function solveDayHeights(
+  cfg: SolverConfig,
+  heights: number[],
+  samples: BodySample[],
+  dem: ElevationSampler,
+  onProgress?: (frac: number) => void,
+  shouldAbort?: () => boolean,
+): Promise<InstantSolution[][]> {
+  const out: InstantSolution[][] = heights.map(() => []);
+  for (let i = 0; i < samples.length; i++) {
+    if (shouldAbort?.()) break;
+    const sols = await solveInstantHeights(cfg, heights, samples[i], dem);
+    sols.forEach((s, h) => out[h].push(s));
+    if (onProgress && i % 20 === 0) onProgress(i / samples.length);
+  }
+  return out;
+}
+
 export async function solveDay(
   cfg: SolverConfig,
   samples: BodySample[],
@@ -188,11 +237,5 @@ export async function solveDay(
   onProgress?: (frac: number) => void,
   shouldAbort?: () => boolean,
 ): Promise<InstantSolution[]> {
-  const out: InstantSolution[] = [];
-  for (let i = 0; i < samples.length; i++) {
-    if (shouldAbort?.()) break;
-    out.push(await solveInstant(cfg, samples[i], dem));
-    if (onProgress && i % 20 === 0) onProgress(i / samples.length);
-  }
-  return out;
+  return (await solveDayHeights(cfg, [cfg.structure.height], samples, dem, onProgress, shouldAbort))[0];
 }

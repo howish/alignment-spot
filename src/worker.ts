@@ -3,7 +3,7 @@
 
 import { createTileSampler } from './dem';
 import { sampleDay, type BodyKind } from './ephemeris';
-import { DEFAULT_CONFIG, solveDay, type AlignMode, type InstantSolution } from './solver';
+import { DEFAULT_CONFIG, solveDayHeights, type AlignMode, type InstantSolution } from './solver';
 
 export interface SolveRequest {
   id: number;
@@ -53,17 +53,21 @@ self.onmessage = async (ev: MessageEvent<{ type: 'solve'; req: SolveRequest }>) 
     refraction: req.refraction,
   };
   const aborted = () => currentId !== req.id; // bail as soon as a newer request lands
-  // the ephemeris samples are height-independent, so both passes share them
-  const passes = 1 + (req.adjustedHeight !== undefined ? 1 : 0);
-  const progress = (pass: number) => (frac: number) => {
-    if (!aborted()) self.postMessage({ type: 'progress', id: req.id, frac: (pass + frac) / passes });
-  };
-  const solutions = await solveDay(cfg, samples, dem, progress(0), aborted);
-  let adjusted: InstantSolution[] | null = null;
-  if (req.adjustedHeight !== undefined) {
-    const adjCfg = { ...cfg, structure: { ...req.structure, height: req.adjustedHeight } };
-    adjusted = await solveDay(adjCfg, samples, dem, progress(1), aborted);
-  }
+  // both heights share each instant's terrain march — two curves, ~one cost
+  const heights =
+    req.adjustedHeight !== undefined ? [req.structure.height, req.adjustedHeight] : [req.structure.height];
+  const layers = await solveDayHeights(
+    cfg,
+    heights,
+    samples,
+    dem,
+    (frac) => {
+      if (!aborted()) self.postMessage({ type: 'progress', id: req.id, frac });
+    },
+    aborted,
+  );
+  const solutions = layers[0];
+  const adjusted: InstantSolution[] | null = layers[1] ?? null;
   // A newer request may have started while this one was solving; stale
   // results are dropped here rather than flickering the UI.
   if (!aborted()) {
