@@ -109,38 +109,27 @@ html, body { margin: 0; height: 100%; overflow: hidden; }
   height: 180px;
   accent-color: var(--accent);
 }
-.adj-bubble {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: var(--fg);
-  background: #fff;
-  border: 1px solid #d1d5db;
-  border-radius: 8px;
-  padding: 1px 5px;
-  white-space: nowrap;
-}
-
-.height-wrap {
+.max-height-wrap {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 1px;
   border: 1px solid #d1d5db;
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 14px;
+  border-radius: 8px;
   background: #fff;
+  padding: 2px 4px;
 }
-.height-wrap input {
-  width: 56px;
+.max-height-wrap input {
+  width: 38px;
   border: none;
   outline: none;
-  font-size: 14px;
+  font-size: 12px;
+  text-align: right;
   font-variant-numeric: tabular-nums;
   -moz-appearance: textfield;
 }
-.height-wrap input::-webkit-outer-spin-button,
-.height-wrap input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.height-wrap .unit { color: var(--muted); font-size: 12px; }
+.max-height-wrap input::-webkit-outer-spin-button,
+.max-height-wrap input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.max-height-wrap .unit { color: var(--muted); font-size: 11px; }
 
 #bottombar {
   position: fixed;

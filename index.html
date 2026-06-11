@@ -20,8 +20,11 @@
     </div>
     <div id="hint-row"><span id="hint"></span></div>
 
-    <div id="side-slider" class="hidden">
-      <span id="adj-value" class="adj-bubble"></span>
+    <div id="side-slider">
+      <label class="max-height-wrap">
+        <input id="max-height-input" type="number" min="1" step="1" inputmode="decimal" />
+        <span class="unit">m</span>
+      </label>
       <input id="adj-slider" type="range" min="0" max="100" step="1" />
     </div>
 
@@ -33,17 +36,10 @@
       <div class="row">
         <button id="sun-btn" class="pill"></button>
         <button id="moon-btn" class="pill"></button>
-        <label class="height-wrap" id="height-wrap">
-          <span id="height-label">⛰</span>
-          <input id="height-input" type="number" min="1" step="1" inputmode="decimal" />
-          <span class="unit">m</span>
-        </label>
-        <button id="settings-btn" class="pill small" aria-label="settings">⚙️</button>
-      </div>
-      <div class="row">
         <button id="date-prev" class="pill small">‹</button>
         <input id="date-input" type="date" />
         <button id="date-next" class="pill small">›</button>
+        <button id="settings-btn" class="pill small" aria-label="settings">⚙️</button>
       </div>
       <div class="row">
         <input id="time-slider" type="range" min="0" max="0" value="0" disabled />

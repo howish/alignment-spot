@@ -237,22 +237,20 @@ function renderInstant(): void {
 
 // --- UI wiring ----------------------------------------------------------------
 
-/** keep the vertical side slider in sync with the typed height */
+/** keep the side bar (max-height bubble + thumb) in sync with state */
 function syncAdjUI(): void {
   const adjSlider = $('adj-slider') as unknown as HTMLInputElement;
   adjSlider.max = String(state.height);
   if (state.adjHeight !== null && state.adjHeight >= state.height) state.adjHeight = null;
-  const v = state.adjHeight ?? state.height;
-  adjSlider.value = String(v);
-  $('adj-value').textContent = `${Math.round(v)}m`;
-  $('side-slider').classList.toggle('hidden', !state.structure);
+  adjSlider.value = String(state.adjHeight ?? state.height);
+  const maxInput = $('max-height-input') as unknown as HTMLInputElement;
+  if (document.activeElement !== maxInput) maxInput.value = String(state.height);
 }
 
 function applyStaticText(): void {
   $('hint').textContent = state.structure ? t('movePin') : t('tapToPlace');
   ($('search-input') as unknown as HTMLInputElement).placeholder = t('searchPlaceholder');
-  $('height-wrap').title = t('structureHeight');
-  ($('height-input') as unknown as HTMLInputElement).placeholder = 'm';
+  $('max-height-input').title = t('structureHeight');
   $('sun-btn').textContent = `☀️ ${t('sun')}`;
   $('moon-btn').textContent = `🌙 ${t('moon')}`;
   $('nav-link').textContent = t('navigate');
@@ -329,16 +327,16 @@ function wire(): void {
   });
   syncKind();
 
-  // pinned height field: re-solve as the user types, lightly debounced
-  const heightInput = $('height-input') as unknown as HTMLInputElement;
-  heightInput.value = String(state.height);
+  // max height lives in the side bar's bubble: type to set the solid curve
+  const maxInput = $('max-height-input') as unknown as HTMLInputElement;
+  maxInput.value = String(state.height);
   let heightTimer: ReturnType<typeof setTimeout> | null = null;
-  heightInput.addEventListener('input', () => {
-    const h = Number(heightInput.value);
+  maxInput.addEventListener('input', () => {
+    const h = Number(maxInput.value);
     if (!Number.isFinite(h) || h <= 0) return;
     state.height = h;
     saveState();
-    syncAdjUI(); // side-bar range follows the typed height
+    syncAdjUI(); // thumb range follows the max
     if (heightTimer) clearTimeout(heightTimer);
     heightTimer = setTimeout(requestSolve, 400);
   });
@@ -359,7 +357,6 @@ function wire(): void {
   adjSlider.addEventListener('input', () => {
     const v = Number(adjSlider.value);
     state.adjHeight = v >= state.height ? null : Math.max(0, v);
-    $('adj-value').textContent = `${Math.round(Math.min(v, state.height))}m`;
     saveState();
     if (adjTimer) clearTimeout(adjTimer);
     adjTimer = setTimeout(requestSolve, 250);
