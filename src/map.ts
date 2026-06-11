@@ -25,12 +25,16 @@ const COLORS = {
   moon: { band: '#60a5fa', line: '#2563eb' },
 };
 
-export function createMap(container: HTMLElement, onTap: (p: LatLon) => void): MapHandles {
+export function createMap(
+  container: HTMLElement,
+  onTap: (p: LatLon) => void,
+  initial?: { center: [number, number]; zoom: number },
+): MapHandles {
   const map = new maplibregl.Map({
     container,
     style: STYLE_URL,
-    center: TAIWAN_CENTER,
-    zoom: 7,
+    center: initial?.center ?? TAIWAN_CENTER,
+    zoom: initial?.zoom ?? 7,
     attributionControl: { compact: true },
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'top-right');

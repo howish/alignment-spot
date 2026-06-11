@@ -25,6 +25,10 @@ interface AppState {
   refraction: boolean;
   /** solver search range in meters */
   maxDistance: number;
+  /** last selected time as minutes since structure-local midnight */
+  timeOfDayMin: number | null;
+  /** last map camera */
+  camera: { lng: number; lat: number; zoom: number } | null;
 }
 
 const today = new Date();
@@ -40,6 +44,8 @@ function loadState(): AppState {
     eyeHeight: 1.6,
     refraction: true,
     maxDistance: 30000,
+    timeOfDayMin: null,
+    camera: null,
   };
   try {
     const raw = localStorage.getItem('state');
@@ -60,11 +66,18 @@ function loadState(): AppState {
       height,
       barMax,
       kind: p.kind === 'moon' ? 'moon' : 'sun',
-      date: isoDate(today),
       mode: p.mode === 'center' ? 'center' : 'bottom-touch',
       eyeHeight: num(p.eyeHeight, def.eyeHeight),
       refraction: typeof p.refraction === 'boolean' ? p.refraction : true,
       maxDistance: [30000, 50000, 100000].includes(p.maxDistance) ? p.maxDistance : def.maxDistance,
+      // resume on the saved date unless it's already in the past
+      date: typeof p.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && p.date >= isoDate(today) ? p.date : isoDate(today),
+      timeOfDayMin:
+        typeof p.timeOfDayMin === 'number' && p.timeOfDayMin >= 0 && p.timeOfDayMin < 1440 ? p.timeOfDayMin : null,
+      camera:
+        p.camera && Number.isFinite(p.camera.lng) && Number.isFinite(p.camera.lat) && Number.isFinite(p.camera.zoom)
+          ? { lng: p.camera.lng, lat: p.camera.lat, zoom: Math.min(Math.max(p.camera.zoom, 1), 20) }
+          : null,
     };
   } catch {
     return def;
@@ -202,18 +215,28 @@ function renderGeometry(): void {
 
 // --- map --------------------------------------------------------------------
 
-const mapH = createMap($('map'), (p) => {
+const mapH = createMap(
+  $('map'),
+  (p) => {
   state.structure = p; // pinned height in the bar carries over
   saveState();
   mapH.setStructure(p);
-  $('hint').textContent = t('movePin');
-  syncAdjUI();
-  recomputeAnchorFromDate(); // structure may sit in a different timezone
-  requestSolve();
-});
+    $('hint').textContent = t('movePin');
+    syncAdjUI();
+    recomputeAnchorFromDate(); // structure may sit in a different timezone
+    requestSolve();
+  },
+  state.camera ? { center: [state.camera.lng, state.camera.lat], zoom: state.camera.zoom } : undefined,
+);
 
-// re-target the high-resolution splice as the user pans/zooms
-mapH.map.on('moveend', () => scheduleRefine());
+// re-target the high-resolution splice as the user pans/zooms, and remember
+// the camera so a reload resumes where the user left off
+mapH.map.on('moveend', () => {
+  scheduleRefine();
+  const c = mapH.map.getCenter();
+  state.camera = { lng: c.lng, lat: c.lat, zoom: mapH.map.getZoom() };
+  saveState();
+});
 
 // test/debug handle (read-only usage; not part of the public surface)
 (window as unknown as Record<string, unknown>).__alignspot = {
@@ -247,7 +270,12 @@ function currentSelectedMs(): number | null {
 function recomputeAnchorFromDate(): void {
   const tz = structureTz();
   const { startMs } = zonedDayWindow(state.date, tz);
-  const ref = currentSelectedMs() ?? Date.now();
+  const sel = currentSelectedMs();
+  if (sel === null && state.timeOfDayMin !== null) {
+    anchorMs = startMs + state.timeOfDayMin * 60000; // resume the saved time of day
+    return;
+  }
+  const ref = sel ?? Date.now();
   const refDayStart = zonedDayWindow(isoDateInTz(ref, tz), tz).startMs;
   anchorMs = startMs + (ref - refDayStart);
 }
@@ -287,6 +315,17 @@ function onSolutions(): void {
   renderInstant();
 }
 
+let rememberTimer: ReturnType<typeof setTimeout> | null = null;
+/** persist the selected time of day (debounced; slider drags fire fast) */
+function rememberTimeOfDay(tMs: number, tz: string): void {
+  if (rememberTimer) clearTimeout(rememberTimer);
+  rememberTimer = setTimeout(() => {
+    const dayStart = zonedDayWindow(isoDateInTz(tMs, tz), tz).startMs;
+    state.timeOfDayMin = Math.round((tMs - dayStart) / 60000) % 1440;
+    saveState();
+  }, 400);
+}
+
 function renderInstant(): void {
   const ok = okIdx;
   if (ok.length === 0 || !state.structure) return;
@@ -302,6 +341,7 @@ function renderInstant(): void {
   const dayDiff = isoDateInTz(s.t, tz) === state.date ? 0 : isoDateInTz(s.t, tz) > state.date ? 1 : -1;
   if (dayDiff !== 0) time += dayDiff > 0 ? ' (+1)' : ' (−1)';
   $('time-label').textContent = time;
+  rememberTimeOfDay(s.t, tz);
   $('status').textContent = '';
   mapH.setBranchSpots(s.all.slice(1).map((sp) => ({ lat: sp.lat, lon: sp.lon, occluded: sp.occluded })));
   if (s.spot) {
@@ -523,6 +563,8 @@ applyStaticText();
 wire();
 if (state.structure) {
   mapH.setStructure(state.structure);
+  recomputeAnchorFromDate();
+  pendingFocusT = anchorMs; // land the slider on the remembered time
   requestSolve();
 }
 
