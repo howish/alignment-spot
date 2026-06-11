@@ -8,8 +8,6 @@ import { DEFAULT_CONFIG, solveDayHeights, type AlignMode, type InstantSolution }
 export interface SolveRequest {
   id: number;
   structure: { lat: number; lon: number; height: number };
-  /** optional second solve at a lower alignment height (side-bar dashed line) */
-  adjustedHeight?: number;
   kind: BodyKind;
   dayStartMs: number;
   dayEndMs: number;
@@ -22,7 +20,6 @@ export interface SolveRequest {
 export interface SolveResult {
   id: number;
   solutions: InstantSolution[];
-  adjusted: InstantSolution[] | null;
 }
 
 const dem = createTileSampler();
@@ -53,12 +50,9 @@ self.onmessage = async (ev: MessageEvent<{ type: 'solve'; req: SolveRequest }>) 
     refraction: req.refraction,
   };
   const aborted = () => currentId !== req.id; // bail as soon as a newer request lands
-  // both heights share each instant's terrain march — two curves, ~one cost
-  const heights =
-    req.adjustedHeight !== undefined ? [req.structure.height, req.adjustedHeight] : [req.structure.height];
   const layers = await solveDayHeights(
     cfg,
-    heights,
+    [req.structure.height],
     samples,
     dem,
     (frac) => {
@@ -67,10 +61,9 @@ self.onmessage = async (ev: MessageEvent<{ type: 'solve'; req: SolveRequest }>) 
     aborted,
   );
   const solutions = layers[0];
-  const adjusted: InstantSolution[] | null = layers[1] ?? null;
   // A newer request may have started while this one was solving; stale
   // results are dropped here rather than flickering the UI.
   if (!aborted()) {
-    self.postMessage({ type: 'result', id: req.id, solutions, adjusted } satisfies SolveResult & { type: string });
+    self.postMessage({ type: 'result', id: req.id, solutions } satisfies SolveResult & { type: string });
   }
 };

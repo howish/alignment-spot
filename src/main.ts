@@ -1,4 +1,4 @@
-import { buildTraceGeometry } from './band';
+import { buildBandGeometry } from './band';
 import { compass, type LatLon } from './geo';
 import { getLang, LANGS, setLang, t } from './i18n';
 import { createMap } from './map';
@@ -14,10 +14,10 @@ type Mode = 'bottom-touch' | 'center';
 
 interface AppState {
   structure: LatLon | null;
-  /** target height in meters — pinned in the bottom bar, survives pin moves */
+  /** alignment height in meters — the side bar's thumb, drives the solve */
   height: number;
-  /** side-bar alignment height (0..height); null = follow the typed height */
-  adjHeight: number | null;
+  /** side bar range top — set by typing into the height label */
+  barMax: number;
   kind: Kind;
   date: string; // YYYY-MM-DD local
   mode: Mode;
@@ -31,7 +31,7 @@ function loadState(): AppState {
   const def: AppState = {
     structure: null,
     height: 100,
-    adjHeight: null,
+    barMax: 100,
     kind: 'sun',
     date: isoDate(today),
     mode: 'bottom-touch',
@@ -48,16 +48,14 @@ function loadState(): AppState {
       p.structure && Number.isFinite(p.structure.lat) && Number.isFinite(p.structure.lon)
         ? { lat: p.structure.lat, lon: p.structure.lon }
         : null;
-    // height moved to its own field; old states carried it inside structure
-    const height = Math.max(1, num(p.height, num(p.structure?.height, def.height)));
-    const adjHeight =
-      typeof p.adjHeight === 'number' && Number.isFinite(p.adjHeight) && p.adjHeight >= 0 && p.adjHeight < height
-        ? p.adjHeight
-        : null;
+    // older states: height inside structure, or a separate adjHeight
+    const legacyMax = Math.max(1, num(p.height, num(p.structure?.height, def.height)));
+    const barMax = Math.max(1, num(p.barMax, legacyMax));
+    const height = Math.min(barMax, Math.max(1, num(p.adjHeight, legacyMax)));
     return {
       structure,
       height,
-      adjHeight,
+      barMax,
       kind: p.kind === 'moon' ? 'moon' : 'sun',
       date: isoDate(today),
       mode: p.mode === 'center' ? 'center' : 'bottom-touch',
@@ -79,7 +77,6 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const worker = new SolverWorker();
 let reqId = 0;
 let solutions: InstantSolution[] = [];
-let adjustedSolutions: InstantSolution[] | null = null;
 let sliderIdx = 0;
 
 worker.onmessage = (ev: MessageEvent) => {
@@ -88,17 +85,9 @@ worker.onmessage = (ev: MessageEvent) => {
     $('status').textContent = `${t('solving')} ${Math.round(msg.frac * 100)}%`;
   } else if (msg.type === 'result' && msg.id === reqId) {
     solutions = msg.solutions;
-    adjustedSolutions = msg.adjusted;
     onSolutions();
   }
 };
-
-/** effective side-bar height, or null when it just follows the typed value */
-function effectiveAdjHeight(): number | null {
-  if (state.adjHeight === null) return null;
-  const clamped = Math.min(Math.max(state.adjHeight, 0), state.height);
-  return Math.abs(clamped - state.height) < 0.5 ? null : clamped;
-}
 
 /** The structure's timezone — the day window and all displayed times use it. */
 const structureTz = () =>
@@ -107,11 +96,9 @@ const structureTz = () =>
 function requestSolve(): void {
   if (!state.structure) return;
   if (!anchorMs) recomputeAnchorFromDate();
-  const adj = effectiveAdjHeight();
   const req: SolveRequest = {
     id: ++reqId,
     structure: { ...state.structure, height: state.height },
-    ...(adj !== null ? { adjustedHeight: adj } : {}),
     kind: state.kind,
     dayStartMs: anchorMs - WINDOW_HALF,
     dayEndMs: anchorMs + WINDOW_HALF,
@@ -172,9 +159,7 @@ function onSolutions(): void {
   const slider = $('time-slider') as unknown as HTMLInputElement;
   if (ok.length === 0 || !state.structure) {
     mapH.setOverlays(null);
-    mapH.setAdjusted(null);
     mapH.setSpot(null, false);
-    mapH.setAdjustedSpot(null);
     slider.disabled = true;
     $('status').textContent = solutions.length ? t('noAlignment') : '';
     $('detail').classList.add('hidden');
@@ -196,8 +181,7 @@ function onSolutions(): void {
     sliderIdx = Math.floor(ok.length / 2);
   }
   slider.value = String(sliderIdx);
-  mapH.setOverlays(buildTraceGeometry(solutions));
-  mapH.setAdjusted(adjustedSolutions ? buildTraceGeometry(adjustedSolutions) : null);
+  mapH.setOverlays(buildBandGeometry(state.structure, solutions));
   $('approx-badge').classList.toggle('hidden', !solutions.some((s) => s.approximate));
   renderInstant();
 }
@@ -207,9 +191,6 @@ function renderInstant(): void {
   if (ok.length === 0 || !state.structure) return;
   const absIdx = ok[Math.min(sliderIdx, ok.length - 1)];
   const s = solutions[absIdx];
-  // adjusted pass shares the sample grid, so the same index is the same instant
-  const adj = adjustedSolutions?.[absIdx];
-  mapH.setAdjustedSpot(adj?.status === 'ok' && adj.spot ? adj.spot : null);
   const tz = structureTz();
   let time = new Date(s.t).toLocaleTimeString(getLang(), {
     hour: '2-digit',
@@ -237,20 +218,33 @@ function renderInstant(): void {
 
 // --- UI wiring ----------------------------------------------------------------
 
-/** keep the side bar (max-height bubble + thumb) in sync with state */
+/** keep the side bar thumb + its riding label in sync with state */
 function syncAdjUI(): void {
   const adjSlider = $('adj-slider') as unknown as HTMLInputElement;
-  adjSlider.max = String(state.height);
-  if (state.adjHeight !== null && state.adjHeight >= state.height) state.adjHeight = null;
-  adjSlider.value = String(state.adjHeight ?? state.height);
-  const maxInput = $('max-height-input') as unknown as HTMLInputElement;
-  if (document.activeElement !== maxInput) maxInput.value = String(state.height);
+  adjSlider.max = String(state.barMax);
+  adjSlider.value = String(state.height);
+  const label = $('height-value') as unknown as HTMLInputElement;
+  if (document.activeElement !== label) label.value = String(Math.round(state.height));
+  positionHeightLabel();
+}
+
+/** the label rides next to the thumb: same vertical coordinate */
+function positionHeightLabel(): void {
+  const slider = $('adj-slider');
+  const wrap = $('height-label-wrap');
+  const container = $('side-slider');
+  const frac = Math.min(1, Math.max(0, state.height / state.barMax));
+  const sliderTop = slider.offsetTop;
+  const thumbH = 16; // range-thumb approximation
+  const y = sliderTop + (1 - frac) * (slider.offsetHeight - thumbH) + thumbH / 2;
+  wrap.style.top = `${y}px`;
+  void container; // container is the offset parent
 }
 
 function applyStaticText(): void {
   $('hint').textContent = state.structure ? t('movePin') : t('tapToPlace');
   ($('search-input') as unknown as HTMLInputElement).placeholder = t('searchPlaceholder');
-  $('max-height-input').title = t('structureHeight');
+  $('height-value').title = t('structureHeight');
   $('sun-btn').textContent = `☀️ ${t('sun')}`;
   $('moon-btn').textContent = `🌙 ${t('moon')}`;
   $('nav-link').textContent = t('navigate');
@@ -327,20 +321,6 @@ function wire(): void {
   });
   syncKind();
 
-  // max height lives in the side bar's bubble: type to set the solid curve
-  const maxInput = $('max-height-input') as unknown as HTMLInputElement;
-  maxInput.value = String(state.height);
-  let heightTimer: ReturnType<typeof setTimeout> | null = null;
-  maxInput.addEventListener('input', () => {
-    const h = Number(maxInput.value);
-    if (!Number.isFinite(h) || h <= 0) return;
-    state.height = h;
-    saveState();
-    syncAdjUI(); // thumb range follows the max
-    if (heightTimer) clearTimeout(heightTimer);
-    heightTimer = setTimeout(requestSolve, 400);
-  });
-
   wireSearch({
     input: $('search-input') as unknown as HTMLInputElement,
     results: $('search-results'),
@@ -351,15 +331,38 @@ function wire(): void {
     onPick: (hit) => mapH.map.flyTo({ center: [hit.lon, hit.lat], zoom: 15 }),
   });
 
-  // vertical side bar: align with a lower point on the structure (dashed line)
+  // side bar thumb = the height; the label rides along and re-solves debounced
   const adjSlider = $('adj-slider') as unknown as HTMLInputElement;
   let adjTimer: ReturnType<typeof setTimeout> | null = null;
   adjSlider.addEventListener('input', () => {
-    const v = Number(adjSlider.value);
-    state.adjHeight = v >= state.height ? null : Math.max(0, v);
+    state.height = Math.max(1, Number(adjSlider.value));
     saveState();
+    const heightLabel = $('height-value') as unknown as HTMLInputElement;
+    heightLabel.value = String(Math.round(state.height));
+    positionHeightLabel();
     if (adjTimer) clearTimeout(adjTimer);
     adjTimer = setTimeout(requestSolve, 250);
+  });
+
+  // tapping the riding label turns it into an input; committing a number sets
+  // both the height and the bar's range top (thumb jumps to that value)
+  const heightLabel = $('height-value') as unknown as HTMLInputElement;
+  heightLabel.addEventListener('focus', () => heightLabel.select());
+  heightLabel.addEventListener('change', () => {
+    const h = Number(heightLabel.value);
+    if (!Number.isFinite(h) || h <= 0) {
+      syncAdjUI();
+      return;
+    }
+    state.height = h;
+    state.barMax = h;
+    saveState();
+    syncAdjUI();
+    requestSolve();
+    heightLabel.blur();
+  });
+  heightLabel.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') heightLabel.blur();
   });
   syncAdjUI();
 

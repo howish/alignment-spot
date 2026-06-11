@@ -1,23 +1,41 @@
-// Build trace-line geometry (GeoJSON) from solver output. Pure — unit-tested.
-// The trace is the primary spot's path over time, split into clear / occluded
-// runs so the renderer can gray out stretches with no sightline.
+// Build map geometry (GeoJSON) from solver output. Pure — unit-tested.
+// Two pieces: the trace line (primary spot path over time, split into
+// clear/occluded runs) and the band (the swept disk-tolerance corridor).
 
+import { destination, normalizeAz, type LatLon } from './geo';
 import type { InstantSolution } from './solver';
 
 type Position = [number, number]; // lon, lat
 
-export interface TraceGeometry {
+export interface BandGeometry {
+  /** swept tolerance corridor, one polygon per contiguous run */
+  band: GeoJSON.Feature<GeoJSON.Polygon>[];
+  /** primary spot trajectory, split into clear / occluded runs */
   clearLines: GeoJSON.Feature<GeoJSON.LineString>[];
   occludedLines: GeoJSON.Feature<GeoJSON.LineString>[];
 }
 
-export function buildTraceGeometry(solutions: InstantSolution[]): TraceGeometry {
+const pos = (p: LatLon): Position => [p.lon, p.lat];
+
+export function buildBandGeometry(structure: LatLon, solutions: InstantSolution[]): BandGeometry {
+  const band: GeoJSON.Feature<GeoJSON.Polygon>[] = [];
   const clearLines: GeoJSON.Feature<GeoJSON.LineString>[] = [];
   const occludedLines: GeoJSON.Feature<GeoJSON.LineString>[] = [];
 
+  let near: Position[] = [];
+  let far: Position[] = [];
   let run: Position[] = [];
   let runOccluded = false;
 
+  const flushBand = () => {
+    if (near.length >= 2) {
+      const ring = [...near, ...far.slice().reverse()];
+      ring.push(ring[0]);
+      band.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } });
+    }
+    near = [];
+    far = [];
+  };
   const flushRun = () => {
     if (run.length >= 2) {
       (runOccluded ? occludedLines : clearLines).push({
@@ -31,10 +49,18 @@ export function buildTraceGeometry(solutions: InstantSolution[]): TraceGeometry 
 
   for (const s of solutions) {
     if (s.status !== 'ok' || !s.spot) {
+      flushBand();
       flushRun();
       continue;
     }
-    const p: Position = [s.spot.lon, s.spot.lat];
+    const backAz = normalizeAz(s.az + 180);
+    if (s.tolerance) {
+      near.push(pos(destination(structure, backAz, s.tolerance.dMin)));
+      far.push(pos(destination(structure, backAz, s.tolerance.dMax)));
+    } else {
+      flushBand();
+    }
+    const p = pos(s.spot);
     if (run.length && s.spot.occluded !== runOccluded) {
       const last = run[run.length - 1];
       flushRun();
@@ -43,6 +69,7 @@ export function buildTraceGeometry(solutions: InstantSolution[]): TraceGeometry 
     runOccluded = s.spot.occluded;
     run.push(p);
   }
+  flushBand();
   flushRun();
-  return { clearLines, occludedLines };
+  return { band, clearLines, occludedLines };
 }
