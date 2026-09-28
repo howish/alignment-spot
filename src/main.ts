@@ -429,6 +429,8 @@ function syncLock(): void {
 
 function applyStaticText(): void {
   syncLock();
+  $('now-btn').title = t('syncNow');
+  $('now-btn').setAttribute('aria-label', t('syncNow'));
   ($('search-input') as unknown as HTMLInputElement).placeholder = t('searchPlaceholder');
   $('height-value').title = t('structureHeight');
   $('sun-btn').textContent = `☀️ ${t('sun')}`;
@@ -507,6 +509,19 @@ function wire(): void {
     requestSolve();
   });
   syncKind();
+
+  // today + now in the structure's timezone; the re-anchor solve lands the
+  // slider on the instant nearest to now
+  $('now-btn').addEventListener('click', () => {
+    if (!state.structure) return;
+    const now = Date.now();
+    state.date = isoDateInTz(now, structureTz());
+    dateInput.value = state.date;
+    anchorMs = now;
+    pendingFocusT = now;
+    saveState();
+    requestSolve();
+  });
 
   $('lock-btn').addEventListener('click', () => {
     if (!state.structure) return; // nothing to lock yet
