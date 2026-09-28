@@ -1,5 +1,5 @@
 import { buildBandGeometry, buildBranchGeometry, mergeSolutions } from './band';
-import { compass, type LatLon } from './geo';
+import { compass, distanceM, type LatLon } from './geo';
 import { getLang, LANGS, setLang, t } from './i18n';
 import { createMap } from './map';
 import type { InstantSolution } from './solver';
@@ -222,6 +222,7 @@ function renderGeometry(): void {
 const mapH = createMap(
   $('map'),
   (p) => {
+    if (p.onCurve && jumpToNearestInstant(p)) return;
     if (state.locked) return;
     state.structure = p; // pinned height in the bar carries over
     saveState();
@@ -260,6 +261,31 @@ const WINDOW_HALF = 12 * 3600000;
 let anchorMs = 0;
 /** after a re-anchor solve, restore the slider to this instant */
 let pendingFocusT: number | null = null;
+
+/**
+ * A tap on the trace: move the slider to the solution whose crossing lies
+ * closest to the tapped point (any crossing, so branch lines work too).
+ */
+function jumpToNearestInstant(p: LatLon): boolean {
+  const ok = okIdx;
+  if (!ok.length) return false;
+  let best = -1;
+  let bestD = Infinity;
+  ok.forEach((abs, i) => {
+    for (const sp of solutions[abs].all) {
+      const d = distanceM(p, sp);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+  });
+  if (best < 0) return false;
+  sliderIdx = best;
+  ($('time-slider') as unknown as HTMLInputElement).value = String(best);
+  renderInstant();
+  return true;
+}
 
 /** the instant currently under the slider thumb, if any */
 function currentSelectedMs(): number | null {

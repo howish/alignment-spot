@@ -25,9 +25,17 @@ const COLORS = {
   moon: { band: '#60a5fa', line: '#2563eb' },
 };
 
+export interface Tap extends LatLon {
+  /** the tap landed on a rendered trace / branch line */
+  onCurve: boolean;
+}
+
+const CURVE_LAYERS = ['clear-line', 'occluded-line', 'branch-line', 'branch-occluded-line'];
+const CURVE_HIT_PX = 10;
+
 export function createMap(
   container: HTMLElement,
-  onTap: (p: LatLon) => void,
+  onTap: (p: Tap) => void,
   initial?: { center: [number, number]; zoom: number },
 ): MapHandles {
   const map = new maplibregl.Map({
@@ -55,9 +63,20 @@ export function createMap(
   let tapTimer: ReturnType<typeof setTimeout> | null = null;
   map.on('click', (e) => {
     if (tapTimer) clearTimeout(tapTimer);
+    // hit-test before the delay: the map may have moved by the time it fires
+    const { x, y } = e.point;
+    const onCurve =
+      ready &&
+      map.queryRenderedFeatures(
+        [
+          [x - CURVE_HIT_PX, y - CURVE_HIT_PX],
+          [x + CURVE_HIT_PX, y + CURVE_HIT_PX],
+        ],
+        { layers: CURVE_LAYERS },
+      ).length > 0;
     tapTimer = setTimeout(() => {
       tapTimer = null;
-      onTap({ lat: e.lngLat.lat, lon: e.lngLat.lng });
+      onTap({ lat: e.lngLat.lat, lon: e.lngLat.lng, onCurve });
     }, 300);
   });
   map.on('dblclick', () => {
