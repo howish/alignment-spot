@@ -28,6 +28,9 @@ const dict = {
     solving: '計算中…',
     date: '日期',
     movePin: '再點地圖可移動目標',
+    lockPin: '鎖定目標',
+    unlockPin: '解除鎖定',
+    lockedHint: '目標已鎖定，點地圖不會移動',
   },
   ja: {
     appName: 'Alignment Spot',
@@ -56,6 +59,9 @@ const dict = {
     solving: '計算中…',
     date: '日付',
     movePin: '地図をタップでターゲット移動',
+    lockPin: 'ターゲットを固定',
+    unlockPin: '固定を解除',
+    lockedHint: 'ターゲット固定中・タップしても動かない',
   },
   en: {
     appName: 'Alignment Spot',
@@ -84,6 +90,9 @@ const dict = {
     solving: 'Solving…',
     date: 'Date',
     movePin: 'Tap the map again to move the target',
+    lockPin: 'Lock target',
+    unlockPin: 'Unlock target',
+    lockedHint: 'Target locked — map taps won’t move it',
   },
 } as const;
 

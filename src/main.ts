@@ -29,6 +29,8 @@ interface AppState {
   timeOfDayMin: number | null;
   /** last map camera */
   camera: { lng: number; lat: number; zoom: number } | null;
+  /** map taps don't move the structure while set */
+  locked: boolean;
 }
 
 const today = new Date();
@@ -46,6 +48,7 @@ function loadState(): AppState {
     maxDistance: 30000,
     timeOfDayMin: null,
     camera: null,
+    locked: false,
   };
   try {
     const raw = localStorage.getItem('state');
@@ -78,6 +81,7 @@ function loadState(): AppState {
         p.camera && Number.isFinite(p.camera.lng) && Number.isFinite(p.camera.lat) && Number.isFinite(p.camera.zoom)
           ? { lng: p.camera.lng, lat: p.camera.lat, zoom: Math.min(Math.max(p.camera.zoom, 1), 20) }
           : null,
+      locked: p.locked === true && structure !== null,
     };
   } catch {
     return def;
@@ -218,10 +222,11 @@ function renderGeometry(): void {
 const mapH = createMap(
   $('map'),
   (p) => {
-  state.structure = p; // pinned height in the bar carries over
-  saveState();
-  mapH.setStructure(p);
-    $('hint').textContent = t('movePin');
+    if (state.locked) return;
+    state.structure = p; // pinned height in the bar carries over
+    saveState();
+    mapH.setStructure(p);
+    syncHint();
     syncAdjUI();
     recomputeAnchorFromDate(); // structure may sit in a different timezone
     requestSolve();
@@ -383,8 +388,21 @@ function positionHeightLabel(): void {
   void container; // container is the offset parent
 }
 
+function syncHint(): void {
+  $('hint').textContent = !state.structure ? t('tapToPlace') : state.locked ? t('lockedHint') : t('movePin');
+}
+
+function syncLock(): void {
+  const btn = $('lock-btn');
+  btn.classList.toggle('active', state.locked);
+  btn.setAttribute('aria-pressed', String(state.locked));
+  btn.title = state.locked ? t('unlockPin') : t('lockPin');
+  btn.setAttribute('aria-label', btn.title);
+  syncHint();
+}
+
 function applyStaticText(): void {
-  $('hint').textContent = state.structure ? t('movePin') : t('tapToPlace');
+  syncLock();
   ($('search-input') as unknown as HTMLInputElement).placeholder = t('searchPlaceholder');
   $('height-value').title = t('structureHeight');
   $('sun-btn').textContent = `☀️ ${t('sun')}`;
@@ -463,6 +481,13 @@ function wire(): void {
     requestSolve();
   });
   syncKind();
+
+  $('lock-btn').addEventListener('click', () => {
+    if (!state.structure) return; // nothing to lock yet
+    state.locked = !state.locked;
+    saveState();
+    syncLock();
+  });
 
   wireSearch({
     input: $('search-input') as unknown as HTMLInputElement,
